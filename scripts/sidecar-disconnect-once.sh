@@ -12,6 +12,8 @@ CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
 : "${DISPLAY_STATE_BIN:=$HOME/.local/bin/display-state}"
 : "${BETTERDISPLAY_CLI:=}"
 : "${BETTERDISPLAY_APP:=}"
+: "${VIRTUAL_DISPLAY_BACKEND:=auto}"
+: "${VIRTUAL_DISPLAY_HELPER:=$HOME/.local/bin/sidecar-virtual-display}"
 : "${BETTERDISPLAY_TIMEOUT_SECONDS:=8}"
 : "${SIDECAR_STATUS_TIMEOUT_SECONDS:=8}"
 : "${SIDECAR_DISCONNECT_TIMEOUT_SECONDS:=25}"
@@ -28,6 +30,7 @@ CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
 : "${VOICE:=Tingting}"
 : "${SPEAK:=1}"
 : "${SIDECAR_AUTO_TEST_MODE:=0}"
+ACTIVE_VIRTUAL_DISPLAY_BACKEND=""
 
 LOCK_DIR="$HOME/Library/Caches/sidecar-auto/explicit-action.lock"
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$LOCK_DIR")" 2>/dev/null || true
@@ -96,6 +99,27 @@ resolve_betterdisplay_cli() {
 }
 run_betterdisplay() {
     run_with_timeout "$BETTERDISPLAY_TIMEOUT_SECONDS" "$BETTERDISPLAY_CLI_RESOLVED" "$@"
+}
+select_virtual_backend() {
+    case "$VIRTUAL_DISPLAY_BACKEND" in
+        builtin)
+            [ -x "$VIRTUAL_DISPLAY_HELPER" ] || return 127
+            printf '%s\n' builtin
+            ;;
+        betterdisplay) printf '%s\n' betterdisplay ;;
+        auto)
+            if [ -x "$VIRTUAL_DISPLAY_HELPER" ]; then printf '%s\n' builtin; else printf '%s\n' betterdisplay; fi
+            ;;
+        *) return 64 ;;
+    esac
+}
+run_builtin_virtual() {
+    run_with_timeout "$BETTERDISPLAY_TIMEOUT_SECONDS" "$VIRTUAL_DISPLAY_HELPER" "$@"
+}
+builtin_virtual_online() {
+    local output code
+    output="$(run_builtin_virtual status 2>&1)"; code=$?
+    [ "$code" -eq 0 ] && printf '%s\n' "$output" | /usr/bin/grep -Eq '(^|[[:space:]])online=1([[:space:]]|$)'
 }
 read_topology() {
     TOPOLOGY_OUTPUT="$(run_with_timeout 6 "$DISPLAY_STATE_BIN" 2>&1)"
@@ -260,6 +284,21 @@ verify_physical_main() {
 }
 verify_virtual_main() {
     local id selector main
+    if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ] ||
+       { [ -z "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" ] && [ "$(select_virtual_backend 2>/dev/null)" = "builtin" ]; }; then
+        local output code
+        if ! builtin_virtual_online; then
+            output="$(run_builtin_virtual status 2>&1)"
+            log "built-in virtual display is not online after disconnect: $output"
+            return 1
+        fi
+        # CoreGraphics does not provide a stable public main-display setter.
+        # Keep the placement request best effort; the required postcondition
+        # for this backend is that the fallback remains online.
+        output="$(run_builtin_virtual set-main 2>&1)"; code=$?
+        [ "$code" -eq 0 ] || log "built-in virtual display main placement was not confirmed (exit=$code): $output"
+        return 0
+    fi
     read_topology || return 1
     id="$(virtual_probe_id)" || return 1
     topology_has_main "$id" virtual || return 1
@@ -273,6 +312,27 @@ verify_virtual_main() {
 }
 ensure_virtual_ready() {
     local output code deadline
+    local selected_backend
+    selected_backend="$(select_virtual_backend 2>/dev/null)"
+    if [ "$selected_backend" = "builtin" ]; then
+        output="$(run_builtin_virtual ensure --background 2>&1)"; code=$?
+        [ "$code" -eq 0 ] || { log "built-in virtual display start failed: $output"; return 1; }
+        deadline=$((SECONDS + DISPLAY_VERIFY_SECONDS))
+        while (( SECONDS <= deadline )); do
+            builtin_virtual_online && {
+                output="$(run_builtin_virtual set-main 2>&1)"; code=$?
+                [ "$code" -eq 0 ] || log "built-in virtual display is online but main placement was not confirmed (exit=$code): $output"
+                ACTIVE_VIRTUAL_DISPLAY_BACKEND=builtin
+                log "built-in virtual display is online; main placement was best effort"
+                return 0
+            }
+            sleep "$DISPLAY_VERIFY_INTERVAL"
+        done
+        log "built-in virtual display did not become online: $(run_builtin_virtual status 2>&1)"
+        return 1
+    fi
+    [ "$selected_backend" = "betterdisplay" ] || return 64
+    ACTIVE_VIRTUAL_DISPLAY_BACKEND=betterdisplay
     read_identifiers || { log "BetterDisplay identifiers preflight failed: $IDENTIFIERS_RAW"; return 1; }
     find_virtual || { log "could not identify BetterDisplay virtual fallback: $VIRTUAL_INFO"; return 1; }
     if ! printf '%s\n' "$VIRTUAL_INFO" | /usr/bin/grep -q '^exists=1 '; then
@@ -330,6 +390,13 @@ wait_for_disconnected() {
 }
 disable_virtual_fallback() {
     local output code deadline
+    if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ] ||
+       { [ -z "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" ] && [ "$(select_virtual_backend 2>/dev/null)" = "builtin" ]; }; then
+        output="$(run_builtin_virtual destroy 2>&1)"; code=$?
+        [ "$code" -eq 0 ] || { log "could not destroy built-in virtual display: $output"; return 1; }
+        log "destroyed built-in virtual display: $output"
+        return 0
+    fi
     read_identifiers || return 1
     find_virtual || return 1
     if ! printf '%s\n' "$VIRTUAL_INFO" | /usr/bin/grep -q '^exists=1 online=1 '; then
@@ -351,7 +418,16 @@ disable_virtual_fallback() {
     return 1
 }
 disable_fallback_if_possible() {
+    local saved_backend="${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" output code
     [ "$DISABLE_FALLBACK_WITH_PHYSICAL" = "1" ] || return 0
+    # A previous auto attempt may have fallen back to BetterDisplay.  The
+    # next invocation cannot recover that in-memory backend choice, so clean
+    # the project-owned helper first and then inspect BetterDisplay separately.
+    if [ -x "$VIRTUAL_DISPLAY_HELPER" ]; then
+        output="$(run_builtin_virtual destroy 2>&1)"; code=$?
+        [ "$code" -eq 0 ] || log "optional built-in virtual display cleanup failed (exit=$code): $output"
+    fi
+    [ "$VIRTUAL_DISPLAY_BACKEND" = "builtin" ] && return 0
     if ! resolve_betterdisplay_cli; then
         log "BetterDisplay CLI unavailable; skipping optional fallback cleanup"
         return 0
@@ -360,9 +436,11 @@ disable_fallback_if_possible() {
         log "BetterDisplay app is not running; skipping optional fallback cleanup"
         return 0
     fi
+    ACTIVE_VIRTUAL_DISPLAY_BACKEND=betterdisplay
     if ! disable_virtual_fallback; then
         log "optional fallback cleanup failed; Sidecar is disconnected and CoreGraphics confirms the physical main display"
     fi
+    ACTIVE_VIRTUAL_DISPLAY_BACKEND="$saved_backend"
     return 0
 }
 finish_failure() {
@@ -416,14 +494,19 @@ physical_id=""
 physical_selector=""
 if [ "$TOPOLOGY_PHYSICAL" -eq 0 ]; then
     headless=1
-    resolve_betterdisplay_cli || finish_failure 127 "找不到 BetterDisplay 命令行工具，未断开" "disconnect refused: BetterDisplay CLI not found"
-    # A headless teardown must preserve the virtual fallback as the next main
-    # display, so BetterDisplay state is a required preflight in this branch.
-    if ! read_identifiers; then
-        finish_failure 3 "BetterDisplay 状态无法读取，未断开" "disconnect refused: BetterDisplay identifiers preflight failed (exit=$IDENTIFIERS_CODE): $IDENTIFIERS_RAW"
+    selected_backend="$(select_virtual_backend 2>/dev/null)"
+    if [ "$selected_backend" = "betterdisplay" ]; then
+        resolve_betterdisplay_cli || finish_failure 127 "找不到 BetterDisplay 命令行工具，未断开" "disconnect refused: BetterDisplay CLI not found"
+        # A headless teardown must preserve the virtual fallback as the next
+        # main display, so BetterDisplay state is a required preflight here.
+        if ! read_identifiers; then
+            finish_failure 3 "BetterDisplay 状态无法读取，未断开" "disconnect refused: BetterDisplay identifiers preflight failed (exit=$IDENTIFIERS_CODE): $IDENTIFIERS_RAW"
+        fi
+    elif [ "$selected_backend" != "builtin" ]; then
+        finish_failure 127 "没有可用的虚拟屏后端，未断开" "disconnect refused: invalid or unavailable VIRTUAL_DISPLAY_BACKEND=$VIRTUAL_DISPLAY_BACKEND"
     fi
     if ! ensure_virtual_ready; then
-        finish_failure 4 "无显示器模式的虚拟备用屏准备失败，未断开" "disconnect refused: fallback virtual display could not be made online and main"
+        finish_failure 4 "无显示器模式的虚拟备用屏准备失败，未断开" "disconnect refused: fallback virtual display could not be made online"
     fi
 else
     physical_id="$(main_physical_id)" || finish_failure 4 "没有唯一的实体主屏，未断开" "disconnect refused: expected one physical main display; topology=$TOPOLOGY_OUTPUT"
@@ -468,13 +551,20 @@ fi
 
 if [ "$headless" -eq 1 ]; then
     if ! verify_virtual_main; then
+        if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+            finish_failure 6 "随航已断开，但项目内置虚拟屏状态未通过校验" "headless postcondition failed: built-in virtual display is not online"
+        fi
         # Sidecar can temporarily take main status during teardown. Restore the
         # already prepared fallback once, then verify rather than retrying Sidecar.
         read_identifiers && find_virtual || finish_failure 6 "随航已断开，但虚拟备用屏状态无法读取" "headless postcondition failed: BetterDisplay virtual identifiers unavailable"
         virtual_selector="$(printf '%s\n' "$VIRTUAL_INFO" | /usr/bin/sed -n 's/.* selector=//p')"
         [ -n "$virtual_selector" ] && set_display_main "$virtual_selector" || finish_failure 6 "随航已断开，但无法恢复虚拟屏主屏" "headless postcondition failed: could not select fallback virtual display as main"
     fi
-    verify_virtual_main || finish_failure 6 "随航已断开，但虚拟备用屏没有保持在线并作为主屏" "headless postcondition failed: fallback virtual display is not online/main"
+    if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+        verify_virtual_main || finish_failure 6 "随航已断开，但项目内置虚拟屏没有保持在线" "headless postcondition failed: built-in virtual display is not online"
+    else
+        verify_virtual_main || finish_failure 6 "随航已断开，但虚拟备用屏没有保持在线并作为主屏" "headless postcondition failed: fallback virtual display is not online/main"
+    fi
 else
     # The external screen was already confirmed as the unmirrored main screen
     # before disconnect. Verify CoreGraphics after teardown; do not require
@@ -494,7 +584,11 @@ if [ "$disconnect_code" -ne 0 ]; then
     finish_failure "$disconnect_code" "显示状态已恢复，但断开命令返回错误" "disconnect command failed after topology recovery (exit=$disconnect_code): $disconnect_output"
 fi
 if [ "$headless" -eq 1 ]; then
-    phrase="随航已断开，虚拟备用屏在线并作为主屏"
+    if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+        phrase="随航已断开，项目内置虚拟屏仍在线"
+    else
+        phrase="随航已断开，虚拟备用屏在线并作为主屏"
+    fi
 else
     phrase="随航已断开，原实体主屏已恢复"
 fi

@@ -35,7 +35,8 @@ jobs:
             "$app/Contents/MacOS/SidecarAutoSetup" \
             "$app/Contents/Resources/bin/sidecarctl" \
             "$app/Contents/Resources/bin/display-state" \
-            "$app/Contents/Resources/bin/sidecar-bluetooth-radio"; do
+            "$app/Contents/Resources/bin/sidecar-bluetooth-radio" \
+            "$app/Contents/Resources/bin/sidecar-virtual-display"; do
             file "$binary" | grep -q 'Mach-O'
           done
       - name: Check public tree

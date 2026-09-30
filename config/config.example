@@ -4,6 +4,12 @@
 IPAD_NAME="iPad"
 # IPAD_USB_SERIAL_NUMBER=""
 AUTO_ENABLE_HANDOFF=1
+# Headless virtual-screen provider. `auto` prefers the built-in fixed screen
+# and falls back to BetterDisplay when the macOS private API is unavailable.
+# Use `builtin` to avoid BetterDisplay entirely, or `betterdisplay` for its
+# advanced display controls and Pro features.
+# auto / builtin / betterdisplay
+VIRTUAL_DISPLAY_BACKEND="auto"
 VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 
 # Optional audio and timeout overrides:

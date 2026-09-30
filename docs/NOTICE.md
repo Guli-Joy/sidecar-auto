@@ -10,6 +10,20 @@ The automation under `scripts/`, the helper sources under `Sources/`, the
 installer, templates and documentation are Copyright (c) 2026 Guli-Joy and are
 available under the MIT License in [`LICENSE`](../LICENSE).
 
+The `Sources/VirtualDisplay/sidecar-virtual-display.m` helper is original
+Sidecar Auto code. It dynamically probes Apple's undocumented
+`SLVirtualDisplay`/`CGVirtualDisplay` runtime classes; no Apple private header
+or BetterDisplay binary is redistributed. The helper is included only for
+user-session GitHub/Developer ID distribution and is not intended for the Mac
+App Store.
+
+`Sources/VirtualDisplay/sidecar-virtual-display.m` uses runtime-only macOS
+virtual-display interfaces. The implementation was informed by the public
+source code and API observations in BetterDummy, Chromium and FBD; no source
+from those projects is bundled here. Those projects remain separate works
+under their own licenses. The built-in provider is optional and may stop
+working after a macOS update.
+
 ## `sidecarctl` source
 
 The Swift Sidecar CLI sources retained under `vendor/sidecarctl/` are

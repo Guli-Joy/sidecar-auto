@@ -34,15 +34,15 @@ printf '%s\n' 'IPAD_USB_SERIAL_NUMBER="在此填写序列号"' >> "$HOME/.config
 
 ### “请求成功但没有随航画面”
 
-`sidecarctl` 接受请求不代表 WindowServer 已创建在线画面。无显示器时确认 BetterDisplay 正在运行、`SidecarHeadlessFallback` 已连接并有 Pro/试用资格；有显示器时检查显示器是否仍在稳定拓扑中。不要连续按键，脚本已禁止重复请求。
+`sidecarctl` 接受请求不代表 WindowServer 已创建在线画面。无显示器时确认所选虚拟屏后端在线：内置后端可运行 `~/.local/bin/sidecar-virtual-display status`，BetterDisplay 后端则确认 `SidecarHeadlessFallback` 已连接并有 Pro/试用资格；有显示器时检查显示器是否仍在稳定拓扑中。不要连续按键，脚本已禁止重复请求。
 
 ### 无线入口没有反应
 
-两台设备都要唤醒、解锁、登录同一 Apple Account，并开启 Wi-Fi、蓝牙和 Handoff。`ForceAWDL` 不要求加入同一个路由器，但 Mac 的 Wi-Fi 必须保持开启。第一次使用时把显示器接回，允许 macOS 的 Bluetooth/TCC 提示；iPad 侧的开关不能由 Mac 远程修改。
+两台设备都要唤醒、解锁、登录同一 Apple Account，并开启 Wi-Fi、蓝牙和 Handoff。Mac 路径是“系统设置 → 通用 → 隔空投送与接力 → 接力”，iPad 路径是“设置 → 通用 → 隔空播放与接力 → 接力”。`ForceAWDL` 不要求加入同一个路由器，但 Mac 的 Wi-Fi 必须保持开启。第一次使用时把显示器接回，允许 macOS 的 Bluetooth/TCC 提示；iPad 侧的开关不能由 Mac 远程修改。
 
-### 无显示器时 BetterDisplay 失败
+### 无显示器时虚拟屏失败
 
-打开 BetterDisplay，确认 CLI 集成和虚拟屏功能可用。创建虚拟屏可能免费，但通过 CLI 连接/启用显示器可能需要 Pro 或试用。脚本会验证屏幕确实存在，失败时播报失败并停止。
+若使用内置方案，运行 `sidecar-virtual-display status`；如果 helper 无法创建或系统更新后不再支持 SPI，把配置改为 `VIRTUAL_DISPLAY_BACKEND="betterdisplay"` 并按 BetterDisplay 的 CLI、虚拟屏和 Pro/试用提示处理。脚本会验证屏幕确实在线，失败时播报失败并停止。
 
 ## 安全恢复
 

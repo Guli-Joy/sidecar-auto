@@ -96,6 +96,7 @@ check_sources() {
     for source in \
         "$ROOT/Sources/DisplayState/DisplayState.swift" \
         "$ROOT/Sources/BluetoothRadio/sidecar-bluetooth-radio.c" \
+        "$ROOT/Sources/VirtualDisplay/sidecar-virtual-display.m" \
         "$SCRIPT_ROOT/sidecar-connect-once.sh" \
         "$SCRIPT_ROOT/sidecar-connect-wireless-once.sh" \
         "$SCRIPT_ROOT/sidecar-ipad-usb-detect.sh" \
@@ -145,16 +146,16 @@ detect_betterdisplay() {
             warn "BetterDisplay.app 存在，但未找到 CLI 可执行文件；请更新或检查安装完整性"
         fi
     else
-        printf 'BetterDisplay：未发现（实体显示器模式不需要；无显示器模式需要它）\n'
+        printf 'BetterDisplay：未发现（实体显示器模式和项目内置虚拟屏模式都不需要）\n'
     fi
-    printf 'BetterDisplay Pro/试用：安装器不会启动、激活或验证许可证；无显示器模式首次连接时需要用户在 BetterDisplay 内完成授权。\n'
+    printf 'BetterDisplay Pro/试用：安装器不会启动、激活或验证许可证；只有选择 BetterDisplay provider 时才需要用户在其应用内完成授权。\n'
 }
 
 build_outputs() {
     STAGE="$(mktemp -d "${TMPDIR:-/tmp}/sidecar-auto-install.XXXXXX")"
     mkdir -p "$STAGE/cli-build"
 
-    # These three jobs have no shared output and can run concurrently. The
+    # These independent jobs have no shared output and can run concurrently. The
     # connection action itself remains serialized later because it changes
     # display topology and owns a single Sidecar session.
     (
@@ -171,6 +172,13 @@ build_outputs() {
             -o "$STAGE/sidecar-bluetooth-radio"
     ) >"$STAGE/build-bluetooth.log" 2>&1 &
     local bluetooth_pid=$!
+    (
+        SDKROOT="$MACOS_SDK" "$CLANG" -O2 -fobjc-arc -isysroot "$MACOS_SDK" \
+            -mmacosx-version-min=13.0 -framework AppKit -framework CoreGraphics -framework Foundation \
+            "$ROOT/Sources/VirtualDisplay/sidecar-virtual-display.m" \
+            -o "$STAGE/sidecar-virtual-display"
+    ) >"$STAGE/build-virtual-display.log" 2>&1 &
+    local virtual_display_pid=$!
 
     local failed=0
     if ! wait "$cli_pid"; then
@@ -187,6 +195,11 @@ build_outputs() {
         failed=1
         printf '构建失败：sidecar-bluetooth-radio\n' >&2
         sed -n '1,120p' "$STAGE/build-bluetooth.log" >&2 || true
+    fi
+    if ! wait "$virtual_display_pid"; then
+        failed=1
+        printf '构建失败：sidecar-virtual-display\n' >&2
+        sed -n '1,120p' "$STAGE/build-virtual-display.log" >&2 || true
     fi
     [ "$failed" -eq 0 ] || fail "依赖构建失败；请根据上面的日志修复 Xcode Command Line Tools 后重试"
     [ -x "$STAGE/cli-build/sidecarctl" ] || fail "sidecarctl 构建完成但找不到输出文件"
@@ -208,7 +221,7 @@ build_outputs() {
 
 verify_outputs() {
     local file name
-    for name in sidecarctl display-state sidecar-bluetooth-radio; do
+    for name in sidecarctl display-state sidecar-bluetooth-radio sidecar-virtual-display; do
         file="$STAGE/$name"
         [ -f "$file" ] && [ -x "$file" ] || fail "构建产物不可执行：$name"
         /usr/bin/file "$file" | /usr/bin/grep -q 'Mach-O' || \
@@ -256,6 +269,7 @@ IPAD_NAME="iPad"
 # Attempt to enable the Mac-side Handoff preferences before wireless Sidecar.
 # The iPad's Handoff switch still must be enabled on the iPad.
 AUTO_ENABLE_HANDOFF=1
+VIRTUAL_DISPLAY_BACKEND="auto"
 VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 EOF
         chmod 0600 "$CONFIG_STAGE"
@@ -266,6 +280,7 @@ EOF
         sidecarctl \
         display-state \
         sidecar-bluetooth-radio \
+        sidecar-virtual-display \
         sidecar-connect-once.sh \
         sidecar-connect-wireless-once.sh \
         sidecar-ipad-usb-detect.sh \
@@ -287,6 +302,7 @@ EOF
         sidecarctl \
         display-state \
         sidecar-bluetooth-radio \
+        sidecar-virtual-display \
         sidecar-connect-once.sh \
         sidecar-connect-wireless-once.sh \
         sidecar-ipad-usb-detect.sh \
@@ -327,6 +343,7 @@ printf '  %s\n' \
     "$BIN_DIR/sidecarctl" \
     "$BIN_DIR/display-state" \
     "$BIN_DIR/sidecar-bluetooth-radio" \
+    "$BIN_DIR/sidecar-virtual-display" \
     "$BIN_DIR/sidecar-connect-once.sh" \
     "$BIN_DIR/sidecar-connect-wireless-once.sh" \
     "$BIN_DIR/sidecar-disconnect-once.sh" \
@@ -363,5 +380,5 @@ cat <<NEXT
 
 安装器没有启动 Sidecar，也没有创建快捷指令或授予隐私权限。
 首次无线连接请在 Mac 解锁、iPad 唤醒并允许 Bluetooth 权限提示时完成一次授权。
-无显示器模式请先打开 BetterDisplay，确认虚拟屏幕功能和 Pro/试用资格；实体显示器模式不需要 BetterDisplay。
+无显示器模式默认使用项目内置固定虚拟屏；需要更多参数时可在配置中选择 BetterDisplay，并按其应用提示完成权限和 Pro/试用设置。
 NEXT

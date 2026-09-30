@@ -6,6 +6,10 @@
 	<string>Sidecar Auto 设置助手</string>
 	<key>CFBundleExecutable</key>
 	<string>SidecarAutoSetup</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon.icns</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>com.gulijoy.sidecar-auto.setup</string>
 	<key>CFBundleInfoDictionaryVersion</key>

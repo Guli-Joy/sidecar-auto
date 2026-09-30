@@ -22,7 +22,7 @@ BetterDisplay 没有隶属关系，也不能承诺每个 macOS 版本都保留�
 1. 设置助手（SwiftUI App）读取状态、保存配置并打开系统设置；
 2. `sidecarctl` 和显示探针调用 macOS 框架；
 3. macOS“快捷指令”或用户快捷键启动脚本；
-4. BetterDisplay 管理无显示器时的独立虚拟屏；
+4. 项目内置的 `sidecar-virtual-display` helper 或 BetterDisplay 管理无显示器时的独立虚拟屏；
 5. macOS 的 WindowServer、Sidecar 服务和 iPad 接收端。
 
 TCC 授权针对请求访问的应用或进程身份。设置助手获得的授权不能假设会自动
@@ -44,7 +44,8 @@ TCC 授权针对请求访问的应用或进程身份。设置助手获得的授�
 | Apple Events/自动化 | UI 恢复可选 | 对指定目标调用 `AEDeterminePermissionToAutomateTarget`，或在实际动作前受控检查 | 需要时允许 App 控制 System Events/相关目标 | 不能自动批准；默认不启用会驱动 Control Center 的路径 |
 | 局域网 | 当前核心不需要 | 不为 ForceAWDL 申请 Local Network TCC | 若将来启用 Bonjour/NWBrowser，按功能允许 | 不能把“连接同一路由器”当作 Sidecar 必需条件 |
 | 接力（Handoff） | 无线核心条件 | 只能读取/尽力写入 Mac 偏好；没有可靠的跨设备有效状态 API | 在 Mac 和 iPad 手动开启，并使用同一 Apple Account 和双重认证 | 不能远程改变 iPad 开关，也不能把 `defaults` 写入成功当成运行时成功 |
-| BetterDisplay | 无显示器核心条件 | 检查 bundle/进程；仅在已运行时查询 CLI 的 `proAvailable` 和虚拟屏状态 | 安装、首次打开、启用虚拟屏和接受其许可/试用条款 | 不能代替安装、绕过 Pro/试用授权或保证其内部 TCC 状态 |
+| 项目内置虚拟屏 | 无显示器可选后端 | 检查 helper、状态文件和在线显示拓扑 | 允许用户会话中的 helper 运行；遇到系统兼容问题时切换后端 | 不能保证未公开 SPI 在未来 macOS 继续可用，也不能静默授予 TCC |
+| BetterDisplay | 高级无显示器后端 | 检查 bundle/进程；仅在已运行时查询 CLI 的 `proAvailable` 和虚拟屏状态 | 安装、首次打开、启用虚拟屏和接受其许可/试用条款 | 不能代替安装、绕过 Pro/试用授权或保证其内部 TCC 状态 |
 | 登录项/LaunchAgent | 可选 | macOS 13+ 使用 `SMAppService.status`；旧模板用 `launchctl` 只读核验 | 用户批准“登录时打开” | 不能伪报后台已启用，不能在登录前显示 Sidecar |
 
 CoreBluetooth 的授权状态与“蓝牙无线电已开启”是两个状态，设置助手必须分别
@@ -59,9 +60,10 @@ CoreBluetooth 的授权状态与“蓝牙无线电已开启”是两个状态，
 - **无线**：两台设备唤醒、解锁并登录同一 Apple Account；Mac 与 iPad 的
   Wi-Fi、蓝牙、Handoff 由用户确认。`ForceAWDL` 是设备到设备路径，不等于
   必须连接同一个路由器。Mac 端蓝牙 TCC 首次授权必须在可见桌面完成。
-- **无显示器**：WindowServer 仍需要一个有效桌面拓扑。BetterDisplay 的独立
-  虚拟屏、CLI 集成和 Pro/试用能力必须先在有显示器的会话里完成一次设置。
-  无显示器不能处理突然出现的 TCC、BetterDisplay 或 Apple Account 弹窗。
+- **无显示器**：WindowServer 仍需要一个有效桌面拓扑。项目内置 helper 会在用户
+  点击连接时创建固定虚拟屏；BetterDisplay 的 CLI 集成和 Pro/试用能力则应先在有
+  显示器的会话里完成一次设置。无显示器不能处理突然出现的 TCC、BetterDisplay
+  或 Apple Account 弹窗。
 
 ## FileVault、登录和冷启动
 
@@ -84,6 +86,22 @@ FileVault 的解密界面发生在用户桌面和普通 App 之前。设置助�
 发布版可以提供已创建的快捷指令模板或安装按钮，但仍要让用户确认导入内容、
 快捷键和“运行 Shell 脚本”权限。快捷指令没有必要获得辅助功能或屏幕录制，除非
 用户主动启用对应的 UI/采集功能。
+
+## 虚拟屏后端边界
+
+项目内置 helper 使用 macOS 未公开的 `SLVirtualDisplay`/`CGVirtualDisplay` 运行时
+接口。它必须在用户桌面会话中常驻，进程退出后 WindowServer 会释放虚拟屏；helper
+只创建一个固定的最小屏，不提供 BetterDisplay 的高级参数。macOS 没有公开的“设为
+主屏”接口，内置后端的布局调整只能尽力并必须通过显示拓扑再次验证。系统更新可能
+改变接口或使创建失败，失败时应切换到 BetterDisplay。
+
+## 权限申请流程
+
+设置助手只在用户点击“申请 / 开启蓝牙”后创建 CoreBluetooth 管理器，触发 macOS
+原生蓝牙隐私确认；返回 App 后会自动重新检查状态。已拒绝的授权会改为打开系统
+设置，不会反复弹窗。辅助功能和屏幕录制不是当前连接路径的必需权限，因此 App
+不会为了“通过检查”而要求用户开启它们；BetterDisplay 的额外权限由 BetterDisplay
+自己申请。Handoff、Wi-Fi 和 iPad 端开关没有受支持的静默申请接口，仍需用户确认。
 
 ## BetterDisplay 的边界
 

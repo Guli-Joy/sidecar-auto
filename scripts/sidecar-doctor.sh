@@ -15,6 +15,8 @@ CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
 : "${BETTERDISPLAY_CLI:=}"
 : "${BETTERDISPLAY_APP:=}"
 : "${VIRTUAL_DISPLAY_NAME:=SidecarHeadlessFallback}"
+: "${VIRTUAL_DISPLAY_BACKEND:=auto}"
+: "${VIRTUAL_DISPLAY_HELPER:=$BIN_DIR/sidecar-virtual-display}"
 : "${IPAD_NAME:=}"
 
 # The connection scripts use a shell-readable config, but a diagnostic should
@@ -50,6 +52,8 @@ loaded="$(config_value SIDECAR_USB_DETECT_BIN)"; [ -z "$loaded" ] || USB_DETECT_
 loaded="$(config_value BETTERDISPLAY_CLI)"; [ -z "$loaded" ] || BETTERDISPLAY_CLI="$loaded"
 loaded="$(config_value BETTERDISPLAY_APP)"; [ -z "$loaded" ] || BETTERDISPLAY_APP="$loaded"
 loaded="$(config_value VIRTUAL_DISPLAY_NAME)"; [ -z "$loaded" ] || VIRTUAL_DISPLAY_NAME="$loaded"
+loaded="$(config_value VIRTUAL_DISPLAY_BACKEND)"; [ -z "$loaded" ] || VIRTUAL_DISPLAY_BACKEND="$loaded"
+loaded="$(config_value VIRTUAL_DISPLAY_HELPER)"; [ -z "$loaded" ] || VIRTUAL_DISPLAY_HELPER="$loaded"
 loaded="$(config_value IPAD_NAME)"; [ -z "$loaded" ] || IPAD_NAME="$loaded"
 
 run_limited() {
@@ -87,6 +91,7 @@ for binary in \
     "$SIDECAR_BIN" \
     "$DISPLAY_STATE_BIN" \
     "$BIN_DIR/sidecar-bluetooth-radio" \
+    "$VIRTUAL_DISPLAY_HELPER" \
     "$USB_DETECT_BIN" \
     "$BIN_DIR/sidecar-connect-once.sh" \
     "$BIN_DIR/sidecar-connect-wireless-once.sh" \
@@ -98,6 +103,7 @@ if [ -r "$CONFIG" ]; then
     ok "配置文件：$CONFIG"
     printf 'IPAD_NAME=%s\n' "${IPAD_NAME:-未设置}"
     printf 'VIRTUAL_DISPLAY_NAME=%s\n' "$VIRTUAL_DISPLAY_NAME"
+    printf 'VIRTUAL_DISPLAY_BACKEND=%s\n' "$VIRTUAL_DISPLAY_BACKEND"
 else
     problem "配置文件不存在：$CONFIG"
 fi
@@ -180,6 +186,18 @@ else
     problem "system_profiler 不存在"
 fi
 
+section "虚拟屏后端（只读，不启动）"
+case "$VIRTUAL_DISPLAY_BACKEND" in
+    builtin|auto)
+        if [ -x "$VIRTUAL_DISPLAY_HELPER" ]; then
+            virtual_output="$(run_limited 5 "$VIRTUAL_DISPLAY_HELPER" status 2>&1)"
+            printf '%s\n' "$virtual_output"
+            printf '%s\n' "$virtual_output" | grep -Eq '(^|[[:space:]])online=1([[:space:]]|$)' && ok "项目内置虚拟屏在线" || note "项目内置虚拟屏当前未在线（连接时按需创建）"
+        else
+            problem "项目内置虚拟屏 helper 不存在：$VIRTUAL_DISPLAY_HELPER"
+        fi
+        ;;
+esac
 section "BetterDisplay（只读，不启动）"
 if [ -z "$BETTERDISPLAY_APP" ]; then
     for candidate in "/Applications/BetterDisplay.app" "$HOME/Applications/BetterDisplay.app"; do
@@ -195,12 +213,16 @@ fi
 if [ -n "$BETTERDISPLAY_APP" ]; then
     ok "BetterDisplay.app：$BETTERDISPLAY_APP"
 else
-    problem "未发现 BetterDisplay（无显示器模式需要它）"
+    if [ "$VIRTUAL_DISPLAY_BACKEND" = "betterdisplay" ]; then
+        problem "未发现 BetterDisplay（当前配置要求 BetterDisplay）"
+    else
+        note "未发现 BetterDisplay（当前配置可使用项目内置虚拟屏）"
+    fi
 fi
 if [ -n "$BETTERDISPLAY_CLI" ]; then
     ok "BetterDisplay CLI：$BETTERDISPLAY_CLI"
 else
-    problem "未发现 BetterDisplay CLI"
+    if [ "$VIRTUAL_DISPLAY_BACKEND" = "betterdisplay" ]; then problem "未发现 BetterDisplay CLI"; else note "未发现 BetterDisplay CLI（当前配置未强制使用它）"; fi
 fi
 if [ -n "$BETTERDISPLAY_CLI" ] && /usr/bin/pgrep -x BetterDisplay >/dev/null 2>&1; then
     pro_output="$(run_limited 8 "$BETTERDISPLAY_CLI" get -proAvailable 2>&1)"

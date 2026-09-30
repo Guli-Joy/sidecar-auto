@@ -1,5 +1,5 @@
 import AppKit
-import CoreBluetooth
+@preconcurrency import CoreBluetooth
 import SwiftUI
 
 @main
@@ -40,6 +40,47 @@ enum CheckAction: Sendable {
     case betterDisplay, shortcuts
 }
 
+/// Keeps a CoreBluetooth manager alive long enough for macOS to show the
+/// first-run Bluetooth privacy prompt. Reading `CBManager.authorization` is
+/// only a status check; it does not ask the user for access by itself.
+private final class BluetoothPermissionRequester: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private let onState: @Sendable (CBManagerState) -> Void
+
+    init(onState: @escaping @Sendable (CBManagerState) -> Void) {
+        self.onState = onState
+        super.init()
+        manager = CBCentralManager(
+            delegate: self,
+            queue: .main,
+            options: [CBCentralManagerOptionShowPowerAlertKey: false]
+        )
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        let state = central.state
+        let callback = onState
+        DispatchQueue.main.async {
+            callback(state)
+        }
+    }
+}
+
+enum VirtualDisplayBackend: String, CaseIterable, Identifiable, Sendable {
+    case auto
+    case builtin
+    case betterdisplay
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .auto: return "自动选择（推荐）"
+        case .builtin: return "项目内置虚拟屏（固定参数）"
+        case .betterdisplay: return "BetterDisplay（高级参数）"
+        }
+    }
+}
+
 struct CheckItem: Identifiable, Sendable {
     let id: String
     let title: String
@@ -54,6 +95,7 @@ struct SetupConfig: Sendable {
     var usbSerial = ""
     var autoEnableHandoff = true
     var virtualDisplayName = "SidecarHeadlessFallback"
+    var virtualDisplayBackend: VirtualDisplayBackend = .auto
 }
 
 @MainActor
@@ -66,11 +108,25 @@ final class SetupModel: ObservableObject {
     @Published var installerLog = ""
     @Published var isOperating = false
     @Published var operationLog = ""
+    @Published var isRequestingPermission = false
 
     private let fileManager = FileManager.default
+    private var bluetoothPermissionRequester: BluetoothPermissionRequester?
+    private var activeObserver: NSObjectProtocol?
 
     init() {
         config = readConfig()
+        activeObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Returning from System Settings is the user's confirmation point.
+            // Re-read TCC and radio state as soon as this window is active.
+            Task { @MainActor [weak self] in
+                self?.refresh()
+            }
+        }
         refresh()
     }
 
@@ -113,7 +169,7 @@ final class SetupModel: ObservableObject {
         case .refresh:
             refresh()
         case .bluetooth:
-            openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
+            requestBluetoothAccess()
         case .handoff:
             openSettings("x-apple.systempreferences:com.apple.preference.general?Handoff")
         case .betterDisplay:
@@ -129,6 +185,95 @@ final class SetupModel: ObservableObject {
             } else {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Shortcuts.app"))
             }
+        }
+    }
+
+    /// Requests Bluetooth privacy access from the app itself. If access was
+    /// already decided, the same button prepares the radio when possible and
+    /// only opens System Settings for the cases macOS cannot change silently.
+    func requestBluetoothAccess() {
+        guard !isRequestingPermission else { return }
+        if #available(macOS 10.15, *) {
+            switch CBManager.authorization {
+            case .notDetermined:
+                isRequestingPermission = true
+                message = "正在申请蓝牙权限，请在系统提示中点击“允许”……"
+                bluetoothPermissionRequester = BluetoothPermissionRequester { [weak self] state in
+                    Task { @MainActor [weak self] in
+                        self?.bluetoothRequestFinished(state)
+                    }
+                }
+                return
+            case .denied, .restricted:
+                openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
+                message = "蓝牙权限已被系统拒绝，请在系统设置中打开 Sidecar Auto；返回后会自动重新检查。"
+                return
+            case .allowedAlways:
+                break
+            @unknown default:
+                break
+            }
+        }
+
+        prepareBluetoothRadio()
+    }
+
+    private func bluetoothRequestFinished(_ state: CBManagerState) {
+        switch state {
+        case .poweredOn:
+            message = "蓝牙权限已确认，正在检查无线电状态……"
+            isRequestingPermission = false
+            bluetoothPermissionRequester = nil
+            prepareBluetoothRadio()
+        case .unauthorized:
+            isRequestingPermission = false
+            bluetoothPermissionRequester = nil
+            message = "蓝牙权限未允许。请在系统提示中选择允许，或到系统设置中开启。"
+            refresh()
+        case .poweredOff:
+            isRequestingPermission = false
+            bluetoothPermissionRequester = nil
+            message = "蓝牙权限已确认，但蓝牙无线电处于关闭状态，正在尝试开启……"
+            prepareBluetoothRadio()
+        case .resetting:
+            message = "正在初始化蓝牙权限，请稍候……"
+        case .unsupported, .unknown:
+            isRequestingPermission = false
+            bluetoothPermissionRequester = nil
+            message = "无法确认蓝牙状态，请打开系统设置检查。"
+            refresh()
+        @unknown default:
+            isRequestingPermission = false
+            bluetoothPermissionRequester = nil
+            message = "无法确认蓝牙状态，请打开系统设置检查。"
+            refresh()
+        }
+    }
+
+    private func prepareBluetoothRadio() {
+        let helper = "\(NSHomeDirectory())/.local/bin/sidecar-bluetooth-radio"
+        guard fileManager.isExecutableFile(atPath: helper) else {
+            openSettings("x-apple.systempreferences:com.apple.Bluetooth-Settings.extension")
+            message = "蓝牙权限已确认，但尚未安装无线电辅助程序。请先点击“安装 / 修复”，或在系统设置中打开蓝牙。"
+            refresh()
+            return
+        }
+
+        isRequestingPermission = true
+        message = "蓝牙权限已确认，正在自动开启蓝牙……"
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.execute(executable: helper, arguments: ["prepare"])
+        }
+        Task { @MainActor [weak self] in
+            let result = await worker.value
+            guard let self else { return }
+            self.isRequestingPermission = false
+            if result.status == 0 {
+                self.message = "蓝牙已开启，正在重新检查环境……"
+            } else {
+                self.message = "蓝牙权限已确认，但自动开启失败；请在系统设置中打开蓝牙。"
+            }
+            self.refresh()
         }
     }
 
@@ -239,6 +384,7 @@ final class SetupModel: ObservableObject {
             case "IPAD_USB_SERIAL_NUMBER": value.usbSerial = parsed
             case "AUTO_ENABLE_HANDOFF": value.autoEnableHandoff = parsed != "0"
             case "VIRTUAL_DISPLAY_NAME": value.virtualDisplayName = parsed
+            case "VIRTUAL_DISPLAY_BACKEND": value.virtualDisplayBackend = VirtualDisplayBackend(rawValue: parsed) ?? .auto
             default: break
             }
         }
@@ -257,7 +403,8 @@ final class SetupModel: ObservableObject {
             "IPAD_NAME": shellQuote(value.iPadName),
             "IPAD_USB_SERIAL_NUMBER": value.usbSerial.isEmpty ? "" : shellQuote(value.usbSerial),
             "AUTO_ENABLE_HANDOFF": value.autoEnableHandoff ? "1" : "0",
-            "VIRTUAL_DISPLAY_NAME": shellQuote(value.virtualDisplayName)
+            "VIRTUAL_DISPLAY_NAME": shellQuote(value.virtualDisplayName),
+            "VIRTUAL_DISPLAY_BACKEND": shellQuote(value.virtualDisplayBackend.rawValue)
         ]
         for (key, replacement) in replacements {
             var found = false
@@ -275,7 +422,8 @@ final class SetupModel: ObservableObject {
                 "IPAD_NAME=\(shellQuote(value.iPadName))",
                 "IPAD_USB_SERIAL_NUMBER=\(value.usbSerial.isEmpty ? "" : shellQuote(value.usbSerial))",
                 "AUTO_ENABLE_HANDOFF=\(value.autoEnableHandoff ? "1" : "0")",
-                "VIRTUAL_DISPLAY_NAME=\(shellQuote(value.virtualDisplayName))"
+                "VIRTUAL_DISPLAY_NAME=\(shellQuote(value.virtualDisplayName))",
+                "VIRTUAL_DISPLAY_BACKEND=\(shellQuote(value.virtualDisplayBackend.rawValue))"
             ]
         }
         try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
@@ -313,7 +461,8 @@ final class SetupModel: ObservableObject {
         let wifi = wifiStatus()
         let bluetooth = bluetoothStatus()
         let handoff = handoffStatus()
-        let betterDisplay = betterDisplayStatus()
+        let betterDisplay = betterDisplayStatus(backend: config.virtualDisplayBackend)
+        let builtinVirtual = builtinVirtualDisplayStatus()
         let configExists = FileManager.default.fileExists(
             atPath: "\(NSHomeDirectory())/.config/sidecar-auto/config")
         let shortcuts = shortcutsStatus()
@@ -334,17 +483,21 @@ final class SetupModel: ObservableObject {
             CheckItem(id: "wifi", title: "Wi-Fi", detail: wifi.detail,
                       state: wifi.ok ? .good : .warning, action: .refresh, actionTitle: "重新检查"),
             CheckItem(id: "bluetooth", title: "蓝牙", detail: bluetooth.detail,
-                      state: bluetooth.ok ? .good : .action, action: .bluetooth, actionTitle: "打开蓝牙设置"),
+                      state: bluetooth.ok ? .good : .action, action: .bluetooth, actionTitle: "申请 / 开启"),
             CheckItem(id: "handoff", title: "接力（Handoff）", detail: handoff.detail,
-                      state: .unknown, action: .handoff, actionTitle: "打开接力设置"),
+                      state: .unknown, action: .handoff, actionTitle: "打开 Mac 接力设置"),
             CheckItem(id: "accessibility", title: "辅助功能权限", detail:
                       "当前连接路径不需要辅助功能权限；只有启用需要 UI 自动化的可选功能时才需要手动授权。",
-                      state: .unknown, action: nil, actionTitle: nil),
+                      state: .good, action: nil, actionTitle: nil),
             CheckItem(id: "screen", title: "屏幕录制权限", detail:
                       "当前连接和显示状态检查不需要屏幕录制权限；BetterDisplay 如有额外要求会在其应用内提示。",
-                      state: .unknown, action: nil, actionTitle: nil),
+                      state: .good, action: nil, actionTitle: nil),
             CheckItem(id: "betterdisplay", title: "BetterDisplay", detail: betterDisplay.detail,
                       state: betterDisplay.ok ? .good : .action, action: .betterDisplay, actionTitle: "打开 BetterDisplay"),
+            CheckItem(id: "builtin-virtual", title: "项目内置虚拟屏", detail: builtinVirtual.detail,
+                      state: builtinVirtual.ok ? .good : .action,
+                      action: builtinVirtual.ok ? .refresh : .install,
+                      actionTitle: builtinVirtual.ok ? "重新检查" : "安装 / 修复"),
             CheckItem(id: "shortcuts", title: "macOS 快捷指令", detail: shortcuts.detail,
                       state: .action, action: .shortcuts, actionTitle: "打开快捷指令"),
             CheckItem(id: "filevault", title: "FileVault / 登录状态", detail: fileVault,
@@ -388,6 +541,7 @@ final class SetupModel: ObservableObject {
             "sidecarctl",
             "display-state",
             "sidecar-bluetooth-radio",
+            "sidecar-virtual-display",
             "sidecar-connect-once.sh",
             "sidecar-connect-wireless-once.sh",
             "sidecar-ipad-usb-detect.sh",
@@ -435,7 +589,7 @@ final class SetupModel: ObservableObject {
                 authorization = "App 的蓝牙隐私授权受到系统限制"
                 authorized = false
             case .notDetermined:
-                authorization = "App 尚未请求蓝牙隐私授权"
+                authorization = "尚未申请蓝牙隐私授权；点击“申请 / 开启”后由 macOS 显示确认"
                 authorized = false
             @unknown default:
                 authorization = "无法识别 App 的蓝牙隐私授权状态"
@@ -451,17 +605,17 @@ final class SetupModel: ObservableObject {
         } else if !radioOn {
             detail = "Mac 蓝牙无线电未开启或状态无法读取；\(authorization)"
         } else {
-            detail = "Mac 蓝牙无线电已开启；\(authorization)。点击按钮在系统设置中允许此 App"
+            detail = "Mac 蓝牙无线电已开启；\(authorization)"
         }
         return (radioOn && authorized, detail)
     }
 
     private nonisolated static func handoffStatus() -> (ok: Bool, detail: String) {
         _ = command("/usr/bin/defaults", ["read", "NSGlobalDomain", "NSUserActivity", "-g"])
-        return (false, "macOS 没有公开 API 能证明接力当前可用；请在 Mac 和 iPad 两端手动确认已开启")
+        return (false, "请确认两端都已开启接力。Mac：系统设置 → 通用 → 隔空投送与接力；iPad：设置 → 通用 → 隔空播放与接力 → 接力。App 无法远程读取或修改 iPad 端开关")
     }
 
-    private nonisolated static func betterDisplayStatus() -> (ok: Bool, detail: String) {
+    private nonisolated static func betterDisplayStatus(backend: VirtualDisplayBackend = .auto) -> (ok: Bool, detail: String) {
         let candidates = [
             "/Applications/BetterDisplay.app",
             "\(NSHomeDirectory())/Applications/BetterDisplay.app"
@@ -472,6 +626,12 @@ final class SetupModel: ObservableObject {
         let bundledCLI = app.map {
             FileManager.default.isExecutableFile(atPath: $0 + "/Contents/MacOS/BetterDisplay")
         } ?? false
+        if backend == .builtin {
+            return (true, "当前使用项目内置虚拟屏；BetterDisplay 仅用于可选高级配置")
+        }
+        if backend == .auto && app == nil && cli.isEmpty {
+            return (true, "当前为自动选择：优先使用项目内置虚拟屏，BetterDisplay 仅作为后备")
+        }
         if app != nil && (!cli.isEmpty || bundledCLI) {
             return (true, "已发现 BetterDisplay；虚拟屏创建和 Pro/试用资格仍需在应用内确认")
         }
@@ -481,7 +641,19 @@ final class SetupModel: ObservableObject {
         if !cli.isEmpty {
             return (true, "已发现 BetterDisplay CLI；虚拟屏创建和 Pro/试用资格仍需在应用内确认")
         }
-        return (false, "未发现 BetterDisplay；有实体显示器时可跳过，无显示器模式需要它")
+        return (false, "未发现 BetterDisplay；项目内置虚拟屏可独立工作，BetterDisplay 仅用于高级后端")
+    }
+
+    private nonisolated static func builtinVirtualDisplayStatus() -> (ok: Bool, detail: String) {
+        let path = "\(NSHomeDirectory())/.local/bin/sidecar-virtual-display"
+        guard FileManager.default.isExecutableFile(atPath: path) else {
+            return (false, "项目内置虚拟屏 helper 尚未安装；点击“安装 / 修复”即可安装")
+        }
+        let output = command(path, ["status"])
+        if output.contains("online=1") {
+            return (true, "项目内置固定虚拟屏在线（1920×1080，60Hz）")
+        }
+        return (true, "项目内置虚拟屏可用，连接时按需创建；当前未占用显示拓扑")
     }
 
     private nonisolated static func shortcutsStatus() -> (ok: Bool, detail: String) {
@@ -535,7 +707,8 @@ final class SetupModel: ObservableObject {
         let binaries = [
             "sidecarctl",
             "display-state",
-            "sidecar-bluetooth-radio"
+            "sidecar-bluetooth-radio",
+            "sidecar-virtual-display"
         ]
         let scripts = [
             "sidecar-connect-once.sh",
@@ -561,7 +734,8 @@ final class SetupModel: ObservableObject {
         let binaries = [
             "sidecarctl",
             "display-state",
-            "sidecar-bluetooth-radio"
+            "sidecar-bluetooth-radio",
+            "sidecar-virtual-display"
         ]
         let scripts = [
             "sidecar-connect-once.sh",
@@ -622,6 +796,7 @@ final class SetupModel: ObservableObject {
                     # Managed by Sidecar Auto Setup.
                     IPAD_NAME=\"iPad\"
                     AUTO_ENABLE_HANDOFF=1
+                    VIRTUAL_DISPLAY_BACKEND=\"auto\"
                     VIRTUAL_DISPLAY_NAME=\"SidecarHeadlessFallback\"
                     """
                     try defaults.write(to: config, atomically: true, encoding: .utf8)
@@ -642,181 +817,394 @@ final class SetupModel: ObservableObject {
 
 }
 
-struct SetupView: View {
-    @StateObject private var model = SetupModel()
 
-    var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    configCard
-                    checksCard
-                    operationCard
-                    if !model.installerLog.isEmpty { installerCard }
-                }
-                .padding(24)
-            }
+private enum SetupSection: String, CaseIterable, Identifiable {
+    case overview, config, checks, test
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: return "概览"
+        case .config: return "连接设置"
+        case .checks: return "环境检查"
+        case .test: return "手动测试"
         }
     }
-
-    private var header: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Sidecar Auto 设置助手")
-                    .font(.largeTitle.bold())
-                Text("逐项检查 Mac、权限和 iPad 配置，完成后再使用快捷指令连接。")
-                    .foregroundStyle(.secondary)
-                Text(model.message)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 8) {
-                Text("\(model.goodCount)/\(model.checks.count) 项通过")
-                    .font(.headline)
-                Button {
-                    model.refresh()
-                } label: {
-                    Label("重新检查", systemImage: "arrow.clockwise")
-                }
-                .disabled(model.isRefreshing || model.isInstalling)
-                HStack(spacing: 8) {
-                    Button {
-                        model.connect()
-                    } label: {
-                        Label("连接一次", systemImage: "rectangle.connected.to.line.below")
-                    }
-                    .disabled(model.isOperating || model.isInstalling)
-                    Button {
-                        model.disconnect()
-                    } label: {
-                        Label("断开一次", systemImage: "rectangle.portrait.and.arrow.right")
-                    }
-                    .disabled(model.isOperating || model.isInstalling)
-                }
-            }
-        }
-        .padding(24)
-    }
-
-    private var configCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("1. 目标 iPad")
-                    .font(.headline)
-                Text("这些设置只保存在本机，不会上传。名称必须与 Mac 系统设置中显示的 Sidecar 设备名一致。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                Form {
-                    TextField("iPad 名称", text: $model.config.iPadName)
-                    TextField("USB 序列号（可选）", text: $model.config.usbSerial)
-                    TextField("无显示器虚拟屏名称", text: $model.config.virtualDisplayName)
-                    Toggle("连接无线 Sidecar 前尝试开启 Mac 侧接力", isOn: $model.config.autoEnableHandoff)
-                }
-                HStack {
-                    Button("保存配置") { model.saveConfig() }
-                        .keyboardShortcut(.defaultAction)
-                    Text("配置路径：~/.config/sidecar-auto/config")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    private var checksCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("2. 环境与权限")
-                    .font(.headline)
-                Text("系统权限不能被第三方 App 静默授予。点击按钮打开对应设置页，完成后返回这里重新检查。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                ForEach(model.checks) { item in
-                    CheckRow(item: item) { action in
-                        model.perform(action)
-                    }
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    private var operationCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("3. 手动测试")
-                        .font(.headline)
-                    Spacer()
-                    if model.isOperating { ProgressView().controlSize(.small) }
-                }
-                Text("连接和断开只会在点击上面的按钮后执行一次，不会因为刷新状态或启动 App 而自动抢占 iPad。")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                if !model.operationLog.isEmpty {
-                    ScrollView {
-                        Text(model.operationLog)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(minHeight: 80, maxHeight: 220)
-                }
-            }
-            .padding(8)
-        }
-    }
-
-    private var installerCard: some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("安装日志")
-                        .font(.headline)
-                    Spacer()
-                    if model.isInstalling { ProgressView().controlSize(.small) }
-                }
-                ScrollView {
-                    Text(model.installerLog)
-                        .font(.system(.caption, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                }
-                .frame(minHeight: 120, maxHeight: 240)
-            }
-            .padding(8)
+    var symbol: String {
+        switch self {
+        case .overview: return "rectangle.3.group.fill"
+        case .config: return "slider.horizontal.3"
+        case .checks: return "checkmark.shield.fill"
+        case .test: return "play.circle.fill"
         }
     }
 }
 
-struct CheckRow: View {
-    let item: CheckItem
-    let action: (CheckAction) -> Void
+private struct SetupView: View {
+    @StateObject private var model = SetupModel()
+    @State private var section: SetupSection = .overview
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: item.state.symbol)
-                .foregroundStyle(item.state.color)
-                .font(.title3)
-                .frame(width: 24)
+        NavigationSplitView {
+            sidebar
+        } detail: {
+            VStack(spacing: 0) {
+                topBar
+                Divider()
+                ScrollView {
+                    page.frame(maxWidth: 900, alignment: .leading)
+                        .padding(.horizontal, 36).padding(.vertical, 30)
+                }
+                .background(Color(nsColor: .windowBackgroundColor))
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+        .navigationSplitViewColumnWidth(min: 250, ideal: 270, max: 300)
+        .tint(Color.sidecarBlue)
+        .frame(minWidth: 900, minHeight: 700)
+    }
+
+    private var sidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 12) {
+                AppMark(size: 42)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sidecar Auto").font(.headline)
+                    Text("设置助手").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 18).padding(.top, 24).padding(.bottom, 22)
+            Text("设置向导").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.horizontal, 18).padding(.bottom, 8)
+            List(SetupSection.allCases, selection: $section) { item in
+                Label(item.title, systemImage: item.symbol).tag(item)
+            }.listStyle(.sidebar)
+            Spacer(minLength: 12)
+            sidebarStatus
+        }
+        .frame(minWidth: 250, idealWidth: 270, maxWidth: 300)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
+    }
+
+    private var sidebarStatus: some View {
+        let total = model.checks.count
+        let passed = model.goodCount
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("准备状态").font(.caption.weight(.semibold))
+                Spacer()
+                Text(total == 0 ? "读取中" : "\(passed)/\(total)")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(Color.sidecarBlue)
+            }
+            ProgressView(value: total == 0 ? 0 : Double(passed) / Double(total)).tint(Color.sidecarBlue)
+            Text(model.message).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+        }
+        .padding(16).background(.quaternary.opacity(0.45), in: RoundedRectangle(cornerRadius: 12))
+        .padding(14)
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(item.title).font(.body.weight(.semibold))
-                Text(item.detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                Text(section.title).font(.title2.bold())
+                Text(section == .overview ? "让 Mac 在没有显示器时也能可靠连接 iPad。" : model.message)
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            if model.isRefreshing { ProgressView().controlSize(.small) }
+            Button { model.refresh() } label: { Label("重新检查", systemImage: "arrow.clockwise") }
+                .buttonStyle(.bordered).disabled(model.isRefreshing || model.isInstalling)
+        }
+        .padding(.horizontal, 36).padding(.vertical, 17)
+    }
+
+    @ViewBuilder private var page: some View {
+        switch section {
+        case .overview: overviewPage
+        case .config: configPage
+        case .checks: checksPage
+        case .test: testPage
+        }
+    }
+
+    private var overviewPage: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            heroCard
+            HStack(alignment: .top, spacing: 16) { overviewStatusCard; nextStepCard }
+            quickActions
+        }
+    }
+
+    private var heroCard: some View {
+        HStack(spacing: 18) {
+            AppMark(size: 68)
+            VStack(alignment: .leading, spacing: 7) {
+                Text("把 iPad 变成你的第二块屏幕").font(.title.bold())
+                Text("先完成一次配置。之后只需按快捷键，Sidecar Auto 会根据数据线和网络状态选择合适的连接方式。")
+                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(24)
+        .background(LinearGradient(colors: [Color.sidecarBlue.opacity(0.18), Color.sidecarBlue.opacity(0.04)],
+                                   startPoint: .topLeading, endPoint: .bottomTrailing),
+                    in: RoundedRectangle(cornerRadius: 18))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.sidecarBlue.opacity(0.18), lineWidth: 1))
+    }
+
+    private var overviewStatusCard: some View {
+        let total = model.checks.count
+        let passed = model.goodCount
+        return Panel {
+            PanelTitle(title: "当前状态", subtitle: "只读检查，不会自动连接 iPad。", symbol: "checkmark.shield")
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text(total == 0 ? "—" : "\(passed)")
+                    .font(.system(size: 38, weight: .bold, design: .rounded)).foregroundStyle(Color.sidecarBlue)
+                Text(total == 0 ? "正在检查" : "项已通过").foregroundStyle(.secondary)
+            }
+            ProgressView(value: total == 0 ? 0 : Double(passed) / Double(total)).tint(Color.sidecarBlue)
+            Text("未通过的项目会在“环境检查”中显示处理按钮。").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var nextStepCard: some View {
+        Panel {
+            PanelTitle(title: "建议步骤", subtitle: "按顺序完成即可。", symbol: "list.number")
+            VStack(alignment: .leading, spacing: 11) {
+                StepLine(number: 1, title: "填写 iPad 名称", done: !model.config.iPadName.isEmpty)
+                StepLine(number: 2, title: "保存连接设置", done: model.checks.contains(where: { $0.id == "config" && $0.state == .good }))
+                StepLine(number: 3, title: "完成环境检查", done: model.goodCount > 3)
+                StepLine(number: 4, title: "按需手动测试", done: !model.operationLog.isEmpty)
+            }
+        }
+    }
+
+    private var quickActions: some View {
+        Panel {
+            PanelTitle(title: "常用操作", subtitle: "只有点击按钮才会执行连接或断开。", symbol: "bolt.fill")
+            HStack(spacing: 12) {
+                Button { section = .config } label: { Label("编辑连接设置", systemImage: "slider.horizontal.3") }
+                    .buttonStyle(.borderedProminent)
+                if model.checks.first(where: { $0.id == "runtime" && $0.state != .good }) != nil {
+                    Button { model.perform(.install) } label: { Label("安装 / 修复工具", systemImage: "arrow.down.app") }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isInstalling)
+                }
+                Button { section = .checks } label: { Label("查看环境检查", systemImage: "checkmark.shield") }
+                    .buttonStyle(.bordered)
+                Button { section = .test } label: { Label("打开手动测试", systemImage: "play.circle") }
+                    .buttonStyle(.bordered)
+            }
+        }
+    }
+
+    private var configPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PageIntro(text: "这些设置只保存在本机。连接时会优先识别 USB 数据线，未连接数据线时再使用无线 Sidecar。")
+            Panel {
+                PanelTitle(title: "目标设备", subtitle: "名称需要与 macOS 显示的 iPad 名称一致。", symbol: "ipad")
+                VStack(alignment: .leading, spacing: 14) {
+                    LabeledContent("iPad 名称") {
+                        TextField("例如：我的 iPad", text: $model.config.iPadName)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                    }
+                    LabeledContent("USB 序列号") {
+                        TextField("可选，用于多台 iPad 时精确匹配", text: $model.config.usbSerial)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                    }
+                }
+            }
+            Panel {
+                PanelTitle(title: "无显示器虚拟屏", subtitle: "拔掉显示器后，连接时按需创建，不会一直占用屏幕。", symbol: "rectangle.on.rectangle")
+                VStack(alignment: .leading, spacing: 12) {
+                    Picker("使用方案", selection: $model.config.virtualDisplayBackend) {
+                        ForEach(VirtualDisplayBackend.allCases) { backend in Text(backend.title).tag(backend) }
+                    }.pickerStyle(.radioGroup)
+                    if model.config.virtualDisplayBackend != .builtin {
+                        LabeledContent("BetterDisplay 屏幕名称") {
+                            TextField("可选", text: $model.config.virtualDisplayName)
+                                .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                        }
+                    }
+                    Text("项目内置方案固定为 1920×1080、60Hz；BetterDisplay 支持更多分辨率和布局参数。内置方案依赖 macOS 的系统接口，系统升级后如遇兼容问题可切换方案。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Panel {
+                PanelTitle(title: "无线连接", subtitle: "不会在 App 启动或刷新时抢占 iPad。", symbol: "wifi")
+                Toggle("连接无线 Sidecar 前尝试开启 Mac 侧接力", isOn: $model.config.autoEnableHandoff)
+                Text("请在两端手动确认接力已开启：Mac：系统设置 → 通用 → 隔空投送与接力；iPad：设置 → 通用 → 隔空播放与接力 → 接力。此 App 不能远程读取或修改 iPad 设置。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(spacing: 12) {
+                Button { model.saveConfig() } label: { Label("保存设置", systemImage: "checkmark.circle.fill") }
+                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                Text("保存到 ~/.config/sidecar-auto/config").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var checksPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PageIntro(text: "这里的检查都是只读的。能由 App 发起的蓝牙授权会显示系统确认；返回本页后状态会自动刷新。")
+            Panel {
+                PanelTitle(title: "权限助手", subtitle: "只申请连接真正需要的权限。", symbol: "hand.raised.fill")
+                HStack(spacing: 12) {
+                    Text("当前连接路径只需要蓝牙隐私授权。辅助功能和屏幕录制对本项目不是必需项，BetterDisplay 如有额外要求会由它自己申请。")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button {
+                        model.requestBluetoothAccess()
+                    } label: {
+                        Label(model.isRequestingPermission ? "申请中…" : "申请 / 开启蓝牙", systemImage: "dot.radiowaves.left.and.right")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isRequestingPermission || model.isInstalling || model.isOperating)
+                }
+            }
+            if model.checks.isEmpty {
+                Panel { HStack { ProgressView(); Text("正在读取本机状态……").foregroundStyle(.secondary) } }
+            } else {
+                VStack(spacing: 9) {
+                    ForEach(model.checks) { item in CheckRow(item: item) { action in model.perform(action) } }
+                }
+            }
+            if !model.installerLog.isEmpty { installerPanel }
+        }
+    }
+
+    private var testPage: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            PageIntro(text: "连接和断开只会在你点击按钮后执行一次。测试时请确保 iPad 已解锁，并准备好接受 Sidecar。")
+            Panel {
+                PanelTitle(title: "连接控制", subtitle: model.isOperating ? "正在执行，请稍候……" : "不会设置后台自动抢占。", symbol: "rectangle.connected.to.line.below")
+                HStack(spacing: 12) {
+                    Button { model.connect() } label: { Label("连接一次", systemImage: "rectangle.connected.to.line.below") }
+                        .buttonStyle(.borderedProminent).disabled(model.isOperating || model.isInstalling)
+                    Button { model.disconnect() } label: { Label("断开一次", systemImage: "rectangle.portrait.and.arrow.right") }
+                        .buttonStyle(.bordered).disabled(model.isOperating || model.isInstalling)
+                    if model.isOperating { ProgressView().controlSize(.small) }
+                }
+            }
+            if !model.operationLog.isEmpty { logPanel(title: "最近一次连接输出", text: model.operationLog) }
+            if !model.installerLog.isEmpty { logPanel(title: "安装日志", text: model.installerLog) }
+        }
+    }
+
+    private var installerPanel: some View { logPanel(title: "安装日志", text: model.installerLog) }
+
+    private func logPanel(title: String, text: String) -> some View {
+        Panel {
+            PanelTitle(title: title, subtitle: "可复制给维护人员排查问题。", symbol: "doc.text.magnifyingglass")
+            ScrollView {
+                Text(text).font(.system(.caption, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled).padding(12)
+            }
+            .frame(minHeight: 90, maxHeight: 230)
+            .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+        }
+    }
+}
+
+private struct PageIntro: View {
+    let text: String
+    var body: some View {
+        Text(text).font(.callout).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.bottom, 2)
+    }
+}
+
+private struct Panel<Content: View>: View {
+    @ViewBuilder let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) { content }
+            .padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.08), lineWidth: 1))
+    }
+}
+
+private struct PanelTitle: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol).font(.title3).foregroundStyle(Color.sidecarBlue).frame(width: 25)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+private struct StepLine: View {
+    let number: Int
+    let title: String
+    let done: Bool
+    var body: some View {
+        HStack(spacing: 9) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle").foregroundStyle(done ? Color.green : Color.secondary)
+            Text("\(number). \(title)").font(.callout).foregroundStyle(done ? .primary : .secondary)
+        }
+    }
+}
+
+private struct AppMark: View {
+    let size: CGFloat
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: size * 0.25)
+                .fill(LinearGradient(colors: [Color.sidecarBlue, Color.sidecarBlue.opacity(0.7)], startPoint: .topLeading, endPoint: .bottomTrailing))
+            RoundedRectangle(cornerRadius: size * 0.14).stroke(.white.opacity(0.85), lineWidth: max(1.5, size * 0.045))
+                .frame(width: size * 0.62, height: size * 0.48)
+            Circle().fill(.white).frame(width: size * 0.14, height: size * 0.14).offset(x: size * 0.18, y: size * 0.14)
+            Circle().fill(.white.opacity(0.9)).frame(width: size * 0.09, height: size * 0.09).offset(x: -size * 0.2, y: -size * 0.16)
+        }
+        .frame(width: size, height: size).shadow(color: Color.sidecarBlue.opacity(0.22), radius: 8, y: 4)
+    }
+}
+
+private extension Color {
+    static let sidecarBlue = Color(red: 0.18, green: 0.42, blue: 0.88)
+}
+
+private struct CheckRow: View {
+    let item: CheckItem
+    let action: (CheckAction) -> Void
+    var body: some View {
+        HStack(alignment: .top, spacing: 13) {
+            Image(systemName: item.state.symbol).font(.title3).foregroundStyle(item.state.color)
+                .frame(width: 30, height: 30).background(item.state.color.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    Text(item.title).font(.body.weight(.semibold))
+                    StatusPill(state: item.state)
+                }
+                Text(item.detail).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
             if let itemAction = item.action, let title = item.actionTitle {
-                Button(title) { action(itemAction) }
-                    .controlSize(.small)
+                Button(title) { action(itemAction) }.buttonStyle(.bordered).controlSize(.small)
             }
         }
-        .padding(10)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .padding(13)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 11))
+        .overlay(RoundedRectangle(cornerRadius: 11).stroke(Color.black.opacity(0.07), lineWidth: 1))
+    }
+}
+
+private struct StatusPill: View {
+    let state: CheckState
+    var body: some View {
+        Text(state == .good ? "正常" : state == .action ? "需要处理" : state == .warning ? "注意" : "需确认")
+            .font(.caption2.weight(.semibold)).foregroundStyle(state.color)
+            .padding(.horizontal, 6).padding(.vertical, 2).background(state.color.opacity(0.12), in: Capsule())
     }
 }

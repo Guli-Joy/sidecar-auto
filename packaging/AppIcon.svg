@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="background" x1="140" y1="84" x2="874" y2="956" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2D78C8"/>
+      <stop offset="0.5" stop-color="#164A88"/>
+      <stop offset="1" stop-color="#081B38"/>
+    </linearGradient>
+    <linearGradient id="display" x1="180" y1="254" x2="704" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#EAF7FF"/>
+      <stop offset="1" stop-color="#C3E5FF"/>
+    </linearGradient>
+    <linearGradient id="screen" x1="238" y1="320" x2="672" y2="626" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2D8BD0"/>
+      <stop offset="1" stop-color="#0C376D"/>
+    </linearGradient>
+    <linearGradient id="ipad" x1="620" y1="160" x2="844" y2="836" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#CDEBFF"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="170%">
+      <feDropShadow dx="0" dy="28" stdDeviation="24" flood-color="#031128" flood-opacity="0.42"/>
+    </filter>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="12" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="outerClip"><rect x="40" y="40" width="944" height="944" rx="220"/></clipPath>
+  </defs>
+
+  <rect x="40" y="40" width="944" height="944" rx="220" fill="url(#background)"/>
+  <g clip-path="url(#outerClip)" opacity="0.13" fill="none" stroke="#D7EEFF">
+    <circle cx="510" cy="490" r="470" stroke-width="3"/>
+    <circle cx="510" cy="490" r="390" stroke-width="2"/>
+    <circle cx="510" cy="490" r="300" stroke-width="2"/>
+  </g>
+  <path d="M52 330C240 136 520 84 970 112V40H40Z" fill="#8FD4FF" opacity="0.14" clip-path="url(#outerClip)"/>
+
+  <g filter="url(#shadow)">
+    <!-- Mac display -->
+    <rect x="134" y="234" width="608" height="478" rx="74" fill="url(#display)"/>
+    <rect x="184" y="284" width="508" height="330" rx="40" fill="url(#screen)"/>
+    <path d="M222 548C324 453 400 531 473 469C536 416 588 436 659 365V574H222Z" fill="#6BC6FF" opacity="0.22"/>
+    <rect x="404" y="708" width="72" height="46" rx="18" fill="#D8F0FF"/>
+    <path d="M334 770H548C566 770 576 782 578 800H304C307 782 318 770 334 770Z" fill="#C6E9FF"/>
+
+    <!-- iPad -->
+    <rect x="602" y="146" width="270" height="690" rx="64" fill="url(#ipad)"/>
+    <rect x="628" y="196" width="218" height="578" rx="40" fill="#0D3568"/>
+    <path d="M655 634C704 580 746 622 779 588C805 562 823 567 846 546V733H655Z" fill="#57BAF5" opacity="0.66"/>
+    <circle cx="737" cy="174" r="8" fill="#8DBAD7"/>
+    <circle cx="737" cy="802" r="10" fill="#8DBAD7"/>
+  </g>
+
+  <!-- Sidecar connection signal -->
+  <g fill="none" stroke-linecap="round" filter="url(#glow)">
+    <path d="M496 422C545 373 601 373 646 414" stroke="#FFFFFF" stroke-width="18"/>
+    <path d="M496 504C545 455 601 455 646 496" stroke="#9DE3FF" stroke-width="14"/>
+    <circle cx="496" cy="422" r="12" fill="#FFFFFF" stroke="none"/>
+    <circle cx="646" cy="414" r="12" fill="#FFFFFF" stroke="none"/>
+  </g>
+</svg>

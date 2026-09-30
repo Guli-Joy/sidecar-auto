@@ -15,12 +15,16 @@ Tools，也不需要在终端输入命令。
    Release 应使用 Developer ID 签名并完成 Apple 公证。
 4. 点击“安装 / 修复”。App 会把预编译运行时复制到
    `~/.local/bin/`，创建 `~/.config/sidecar-auto/config`，已有配置不会覆盖。
-5. 点击“重新检查”，确认状态卡片中的项目已经读取完成。
+5. 点击“重新检查”，确认状态卡片中的项目已经读取完成。选择“项目内置虚拟屏”时不需要安装 BetterDisplay；选择“BetterDisplay（高级参数）”时，无实体显示器连接才会要求 BetterDisplay CLI。
 
 不要从 GitHub 的 **Code → Download ZIP** 代替正式 Release 给普通用户使用。
 ZIP 是源代码，适合开发者；它不能代替签名和公证后的 App。
 
 ## 第一次配置
+
+新版设置助手左侧分为“概览”“连接设置”“环境检查”和“手动测试”。概览页只显示
+下一步和常用操作；检查项不会因为状态刷新而连接 iPad。需要修改设备或虚拟屏时，
+分别进入对应分区，保存后再回到“环境检查”点击重新检查。
 
 ### 1. 选择目标 iPad
 
@@ -45,11 +49,11 @@ ZIP 是源代码，适合开发者；它不能代替签名和公证后的 App。
 无线 Sidecar 需要两台设备都满足 Apple 的 Sidecar 条件：
 
 - Mac 和 iPad 登录同一个 Apple Account，并开启双重认证；
-- 两台设备都打开 Wi‑Fi、蓝牙和接力（Handoff）；
+- 两台设备都打开 Wi‑Fi、蓝牙和接力（Handoff）。Mac 的路径是“系统设置 → 通用 → 隔空投送与接力 → 接力”；iPad 的路径是“设置 → 通用 → 隔空播放与接力 → 接力”；
 - iPad 已解锁并保持唤醒，设备距离较近；
 - 首次使用时在有屏幕的情况下允许 macOS 或快捷指令使用蓝牙。
 
-工具只能读取和准备 Mac 侧的无线状态。它不能远程打开 iPad 上的 Wi‑Fi、
+工具只能读取和准备 Mac 侧的无线状态。iPad 端请在“设置 → 通用 → 隔空播放与接力 → 接力”中手动开启；App 不能远程读取或修改这个开关。它不能远程打开 iPad 上的 Wi‑Fi、
 蓝牙或接力，也不能代替 macOS 隐私设置中的人工确认。完成设置后回到 App，
 点击“重新检查”，再点击“连接一次”。
 
@@ -59,14 +63,19 @@ ZIP 是源代码，适合开发者；它不能代替签名和公证后的 App。
 
 ### 4. 没有实体显示器
 
-没有显示器时，macOS 可能没有可用于建立 Sidecar 的桌面拓扑。请先安装并运行
-[BetterDisplay](https://github.com/waydabber/BetterDisplay)，然后在设置助手
-中点击“打开 BetterDisplay”。
+没有显示器时，macOS 可能没有可用于建立 Sidecar 的桌面拓扑。设置助手提供三种
+方案：
 
-项目可以请求创建名为 `SidecarHeadlessFallback` 的独立虚拟屏。虚拟屏是
-Sidecar 建立前的桌面占位，不是 iPad 屏幕，也不能解锁 iPad 或绕过 BetterDisplay
-的 Pro/试用授权。首次启动 BetterDisplay 时出现的权限、许可和提示必须由用户
-自己确认。完成后再次点击“重新检查”，再进行一次连接测试。
+- **自动选择（推荐）**：优先使用项目内置的固定 1920×1080、60Hz 虚拟屏；如果当前 macOS 无法创建内置屏，脚本会自动尝试 BetterDisplay，随后才提示处理失败；
+- **项目内置虚拟屏**：不安装 BetterDisplay，只创建一个最小备用屏；它使用 macOS 未公开接口，系统更新可能失效；
+- **BetterDisplay**：需要安装并运行 [BetterDisplay](https://github.com/waydabber/BetterDisplay)，可以使用更多分辨率、HiDPI、排列和其他显示参数。
+
+虚拟屏是 Sidecar 建立前的桌面占位，不是 iPad 屏幕，也不能解锁 iPad。项目内置
+方案的名称和模式固定为 `SidecarHeadlessFallback`、1920×1080、60Hz，
+`VIRTUAL_DISPLAY_NAME` 只用于 BetterDisplay 后端的命名。选择 BetterDisplay 时，
+首次启动的权限、许可和 Pro/试用提示必须由用户自己确认。完成配置后点击“重新检查”，
+再进行一次连接测试。内置虚拟屏只在用户点击连接时启动，不会因为打开 App 或刷新状态
+而抢占 iPad。
 
 ## 权限和状态卡片
 
@@ -78,10 +87,12 @@ App 把状态分成三类：
 - **无法由 App 证明**：例如 iPad 端接力开关、BetterDisplay 的许可和某些
   macOS TCC 状态，最终要通过一次连接测试确认。
 
-系统权限不能被第三方 App 静默授予。App 不会保存密码、不输入 FileVault
-密码，也不会绕过辅助功能、蓝牙、屏幕录制或 Gatekeeper 安全策略。当前连接
-路径不需要 App 自己获得辅助功能或屏幕录制权限；如果 BetterDisplay 需要额外
-权限，请在 BetterDisplay 的提示中处理。
+系统权限不能被第三方 App 静默授予。设置助手的“申请 / 开启蓝牙”会由 App
+原生触发 macOS 蓝牙确认；你点击允许后，App 会自动重新检查，并在需要时尝试
+开启 Mac 蓝牙无线电。若权限此前被拒绝，按钮会直接打开对应的系统设置页。
+当前连接路径不需要辅助功能或屏幕录制权限；如果 BetterDisplay 需要额外权限，
+请在 BetterDisplay 自己的提示中点击允许。App 不会保存密码、不输入 FileVault
+密码，也不会绕过系统安全策略。
 
 启用 FileVault 时，冷启动会先停在解密界面。设置助手只在用户登录后的桌面会话
 中运行，不能代办开机解密或登录。
@@ -119,7 +130,7 @@ App 把状态分成三类：
 
 ### 点击连接后提示成功，但 iPad 没有画面
 
-先确认 iPad 已解锁，再检查显示器拓扑和 BetterDisplay 虚拟屏是否在线。打开
+先确认 iPad 已解锁，再检查显示器拓扑和所选虚拟屏是否在线。打开
 终端运行只读诊断：
 
 ```sh

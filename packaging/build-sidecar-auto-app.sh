@@ -123,6 +123,7 @@ for required in \
     "$ROOT/Sources/SidecarAutoSetup/main.swift" \
     "$ROOT/Sources/DisplayState/DisplayState.swift" \
     "$ROOT/Sources/BluetoothRadio/sidecar-bluetooth-radio.c" \
+    "$ROOT/Sources/VirtualDisplay/sidecar-virtual-display.m" \
     "$ROOT/vendor/sidecarctl/Sources/CLI/main.swift" \
     "$ROOT/vendor/sidecarctl/Sources/Shared" \
     "$ROOT/scripts/sidecar-connect-once.sh" \
@@ -134,6 +135,7 @@ for required in \
     "$ROOT/scripts/sidecar-login-ready.sh" \
     "$ROOT/config/config.example" \
     "$ROOT/launchd/com.sidecarauto.login-ready.plist.template" \
+    "$PACKAGING_ROOT/AppIcon.icns" \
     "$PACKAGING_ROOT/SidecarAutoSetup-Info.plist"; do
     [ -e "$required" ] || fail "缺少打包输入：$required"
 done
@@ -174,6 +176,11 @@ compile_arch() {
         -isysroot "$SDK" -framework IOBluetooth \
         "$ROOT/Sources/BluetoothRadio/sidecar-bluetooth-radio.c" \
         -o "$dir/sidecar-bluetooth-radio"
+    info "编译 ${arch}：sidecar-virtual-display"
+    "$CLANG" -O2 -fobjc-arc -arch "$arch" -mmacosx-version-min="$MIN_MACOS" \
+        -isysroot "$SDK" -framework AppKit -framework CoreGraphics -framework Foundation \
+        "$ROOT/Sources/VirtualDisplay/sidecar-virtual-display.m" \
+        -o "$dir/sidecar-virtual-display"
 }
 
 for arch in "${ARCHES[@]}"; do
@@ -199,6 +206,7 @@ make_universal() {
 make_universal sidecarctl
 make_universal display-state
 make_universal sidecar-bluetooth-radio
+make_universal sidecar-virtual-display
 # The GUI executable belongs in Contents/MacOS, rather than Resources/bin.
 # Reuse the same universal assembly helper and then remove the staging copy
 # so code signing cannot mistake it for a second nested executable.
@@ -226,6 +234,9 @@ cp "$ROOT/launchd/com.sidecarauto.login-ready.plist.template" \
 cp "$ROOT/vendor/sidecarctl/LICENSE" \
    "$STAGE/app/Contents/Resources/ThirdParty/sidecarctl-LICENSE"
 cp "$ROOT/docs/NOTICE.md" "$STAGE/app/Contents/Resources/ThirdParty/NOTICE.md"
+cp "$PACKAGING_ROOT/AppIcon.icns" "$STAGE/app/Contents/Resources/AppIcon.icns"
+cp "$ROOT/Sources/VirtualDisplay/sidecar-virtual-display.m" \
+   "$STAGE/app/Contents/Resources/ThirdParty/sidecar-virtual-display-source.m"
 
 sed -e "s/__VERSION__/$VERSION/g" -e "s/__BUILD_VERSION__/$BUILD_VERSION/g" \
     "$PACKAGING_ROOT/SidecarAutoSetup-Info.plist" \
@@ -243,7 +254,8 @@ sign_nested() {
         "$STAGE/app/Contents/MacOS/SidecarAutoSetup" \
         "$STAGE/app/Contents/Resources/bin/sidecarctl" \
         "$STAGE/app/Contents/Resources/bin/display-state" \
-        "$STAGE/app/Contents/Resources/bin/sidecar-bluetooth-radio"; do
+        "$STAGE/app/Contents/Resources/bin/sidecar-bluetooth-radio" \
+        "$STAGE/app/Contents/Resources/bin/sidecar-virtual-display"; do
         codesign "${options[@]}" "$executable"
     done
     codesign "${options[@]}" --entitlements "$PACKAGING_ROOT/SidecarAutoSetup.entitlements" \
@@ -265,7 +277,8 @@ for executable in \
     "$APP_DIR/Contents/MacOS/SidecarAutoSetup" \
     "$APP_DIR/Contents/Resources/bin/sidecarctl" \
     "$APP_DIR/Contents/Resources/bin/display-state" \
-    "$APP_DIR/Contents/Resources/bin/sidecar-bluetooth-radio"; do
+    "$APP_DIR/Contents/Resources/bin/sidecar-bluetooth-radio" \
+    "$APP_DIR/Contents/Resources/bin/sidecar-virtual-display"; do
     /usr/bin/file "$executable" | grep -q 'Mach-O' || fail "不是 Mach-O 产物：$executable"
 done
 
@@ -274,7 +287,8 @@ if [ "${#ARCHES[@]}" -gt 1 ]; then
         "$APP_DIR/Contents/MacOS/SidecarAutoSetup" \
         "$APP_DIR/Contents/Resources/bin/sidecarctl" \
         "$APP_DIR/Contents/Resources/bin/display-state" \
-        "$APP_DIR/Contents/Resources/bin/sidecar-bluetooth-radio"; do
+        "$APP_DIR/Contents/Resources/bin/sidecar-bluetooth-radio" \
+        "$APP_DIR/Contents/Resources/bin/sidecar-virtual-display"; do
         arch_info="$(lipo -info "$executable")"
         for arch in "${ARCHES[@]}"; do
             printf '%s\n' "$arch_info" | grep -qw "$arch" || \

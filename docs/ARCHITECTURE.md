@@ -12,6 +12,7 @@ Sidecar Auto 把一次连接动作拆成“只读预检 → 一次状态改变 �
 | `scripts/sidecar-doctor.sh` | 只读诊断，不改变设备和设置 |
 | `scripts/sidecar-ipad-usb-detect.sh` | 从 IORegistry 判断是否存在唯一 iPad USB 数据设备 |
 | `Sources/DisplayState/DisplayState.swift` | 使用 CoreGraphics/AppKit 统计实体、虚拟和 Sidecar 显示器 |
+| `Sources/VirtualDisplay/sidecar-virtual-display.m` | 常驻内置虚拟屏 helper；macOS 26+ 使用 SkyLight 私有类，旧系统动态探测兼容后端 |
 | `Sources/BluetoothRadio/sidecar-bluetooth-radio.c` | 读取或准备 Mac 侧蓝牙控制器状态 |
 | `vendor/sidecarctl` | 上游衍生的 Swift CLI；设备快照和私有 SidecarCore 调用 |
 | `installer/install-sidecar-auto.sh` | 预检、并行构建、产物验证和逐文件安装 |
@@ -30,17 +31,17 @@ Sidecar Auto 把一次连接动作拆成“只读预检 → 一次状态改变 �
    └─ 无线：ForceAWDL
           │
           ├─ Wi-Fi / 蓝牙 / Handoff 按需准备
-          ├─ 无显示器：BetterDisplay 独立虚拟屏
+          ├─ 无显示器：项目内置虚拟屏或 BetterDisplay 独立虚拟屏
           └─ sidecarctl connect（只发起一次）
                     │
                     └─ Sidecar 状态 + CoreGraphics 画面验证
 ```
 
-显示拓扑准备、BetterDisplay 创建、设置主屏和 Sidecar 连接必须保持串行。可以并行的只有不会改变系统状态的查询；这是速度和避免竞态之间的边界。
+显示拓扑准备、虚拟屏创建、设置布局和 Sidecar 连接必须保持串行。可以并行的只有不会改变系统状态的查询；内置 helper 还必须保持常驻，因为对象释放会让 WindowServer 移除虚拟屏。
 
-## 为什么保留 Shell 和 Swift
+## 为什么保留 Shell、Swift 和 Objective-C helper
 
-Swift 直接调用 macOS 框架并承担私有 API 和状态快照。Shell 适合被 macOS“快捷指令”直接调用，也方便调用 `afplay`、`say`、`networksetup` 和 BetterDisplay CLI。将入口整体改成 Rust 或 Go 会增加框架绑定和发布步骤，不能减少实际无线协商或显示器建立时间。
+Swift 直接调用 macOS 框架并承担私有 API 和状态快照。Objective-C helper 负责持有虚拟显示对象；对象释放后 WindowServer 会立即移除虚拟屏，所以它在连接期间作为当前用户登录会话中的常驻进程运行。它不是默认登录启动项。Shell 适合被 macOS“快捷指令”直接调用，也方便调用 `afplay`、`say`、`networksetup` 和 BetterDisplay CLI。将入口整体改成 Rust 或 Go 会增加框架绑定和发布步骤，不能减少实际无线协商或显示器建立时间。
 
 ## 配置和数据
 

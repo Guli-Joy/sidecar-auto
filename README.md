@@ -5,7 +5,7 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 它适合两种场景：
 
 - **有显示器**：Sidecar 作为扩展屏连接，保持 macOS 的普通显示布局。
-- **没有显示器**：第一次连接前自动准备 BetterDisplay 独立虚拟屏，给 macOS 一个可用的桌面拓扑；Sidecar 画面出现后再把 iPad 设为主屏。
+- **没有显示器**：第一次连接前自动准备项目内置或 BetterDisplay 独立虚拟屏，给 macOS 一个可用的桌面拓扑；Sidecar 画面出现后再尝试把 iPad 设为主屏。
 
 连接过程有中文语音、提示音和通知。连接请求不会在后台无限重试，也不会因为一次断开就重新抢占正在使用的 iPad。
 
@@ -50,9 +50,11 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 状态探针、蓝牙助手和连接脚本；普通用户不需要安装 Swift、clang 或 Xcode
 Command Line Tools。
 
-设置助手会逐项显示 macOS、无线状态、目标 iPad、BetterDisplay 和配置文件状态，
+设置助手会逐项显示 macOS、无线状态、目标 iPad、项目内置虚拟屏、BetterDisplay 和配置文件状态，
 提供“安装 / 修复”“重新检查”“连接一次”和“断开一次”按钮。它不会在启动或刷新
 时自动抢占 iPad，不会保存密码，也不能替用户授予 macOS 或 iPad 的隐私权限。
+环境检查中的“申请 / 开启蓝牙”会在用户点击后触发 macOS 原生确认，并在返回 App
+时自动刷新；辅助功能和屏幕录制对当前连接路径不是必需权限。
 
 维护者可以在 macOS 上构建未签名的本地 App：
 
@@ -72,7 +74,7 @@ Command Line Tools。
 1. 读取一次 Sidecar 设备快照，拒绝未知状态、重复名称和另一台 iPad 已占用的情况。
 2. 检查 USB 注册表。唯一匹配的 iPad 数据设备选择 `ForceUSB`；没有匹配设备选择 `ForceAWDL`。多台 iPad 没有配置序列号时停止，避免误连。
 3. 并行读取显示拓扑、Sidecar 状态和 USB 检测；无线开关在传输路径确定后按需准备。
-4. 没有实体显示器时检查 BetterDisplay 的 `SidecarHeadlessFallback` 虚拟屏；缺少时创建并验证，后续重复使用。
+4. 没有实体显示器时按配置准备 `SidecarHeadlessFallback`：`auto` 优先项目内置固定虚拟屏，`builtin` 完全不调用 BetterDisplay，`betterdisplay` 使用 BetterDisplay 的高级参数。
 5. 只发起一次连接请求，然后同时确认 Sidecar 会话和在线显示画面。API 返回成功但 iPad 没有画面时会报告失败，不会重复抢占设备。
 
 显式入口仍然可用于排障：
@@ -87,9 +89,9 @@ Command Line Tools。
 
 - Mac 使用 macOS 13 或更高版本；需要 Xcode Command Line Tools（`swiftc`、`clang`、macOS SDK）。
 - iPad 支持 Sidecar，与 Mac 登录同一个 Apple Account，并开启双重认证。
-- 无线模式要求两台设备都打开 Wi-Fi、蓝牙和接力（Handoff），保持唤醒并在约 10 米内。`ForceAWDL` 是设备到设备的无线路径，不要求连接同一个路由器；Wi-Fi 无路由器、无显示器场景仍取决于具体 macOS、硬件和权限，应按[排障](#排障)实际验证。
+- 无线模式要求两台设备都打开 Wi‑Fi、蓝牙和接力（Handoff），保持唤醒并在约 10 米内。Mac 在“系统设置 → 通用 → 隔空投送与接力 → 接力”开启接力；iPad 在“设置 → 通用 → 隔空播放与接力 → 接力”开启接力。`ForceAWDL` 是设备到设备的无线路径，不要求连接同一个路由器；Wi-Fi 无路由器、无显示器场景仍取决于具体 macOS、硬件和权限，应按[排障](#排障)实际验证。
 - 有线模式要求使用可传输数据的 USB 线，并在 iPad 上信任这台 Mac。仅供电的线不会被 USB 检测器识别，会按无线模式处理。
-- 无显示器模式需要 BetterDisplay。创建虚拟屏本身可能免费，但用命令行连接显示器属于 BetterDisplay 的 Pro/试用能力；安装器不会代替用户处理授权和首次启动权限。
+- 无显示器模式默认不需要 BetterDisplay：项目内置 helper 提供固定的 1920×1080、60Hz 虚拟屏。它调用 macOS 未公开的虚拟显示接口，系统更新可能失效；需要 HiDPI、更多分辨率、排列或其他参数时可选择 BetterDisplay。
 - iPad 必须唤醒并解锁。Sidecar 不能在锁定的 iPad 上创建屏幕会话。
 
 ## 安装
@@ -104,7 +106,7 @@ cd /path/to/sidecar-auto
 也可以在 Finder 中双击 `installer/install-sidecar-auto.command`。安装器会：
 
 - 检查 macOS、编译工具和 SDK；
-- 并行构建 `sidecarctl`、显示拓扑探针和蓝牙状态助手；
+- 并行构建 `sidecarctl`、显示拓扑探针、蓝牙助手和项目内置虚拟屏 helper；
 - 检查 Mach-O 输出后逐个原子替换 `~/.local/bin` 中的文件；
 - 创建 `~/.config/sidecar-auto/config` 示例（已有配置不会覆盖）；
 - 安装只读诊断脚本 `sidecar-doctor.sh`。
@@ -132,6 +134,8 @@ IPAD_NAME="iPad Pro"
 # 多台 iPad 同时插线时填 USB Serial Number；不需要时保持注释。
 # IPAD_USB_SERIAL_NUMBER=""
 AUTO_ENABLE_HANDOFF=1
+# auto / builtin / betterdisplay
+VIRTUAL_DISPLAY_BACKEND="auto"
 VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 ```
 
@@ -153,16 +157,16 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 
 脚本在 `~/Library/Caches/sidecar-auto/explicit-action.lock` 中串行化同时按键，并把结果写入 `~/Library/Logs/sidecar-auto.log`。日志只保存在本机，可能包含 iPad 名称和系统错误。
 
-## 无显示器和 BetterDisplay
+## 无显示器和虚拟屏方案
 
-拔掉显示器后，WindowServer 可能在几秒内仍报告旧拓扑。连接脚本会等待拓扑稳定；不要在这段时间重复按快捷键。确认 BetterDisplay 已安装并运行后，脚本会：
+拔掉显示器后，WindowServer 可能在几秒内仍报告旧拓扑。连接脚本会等待拓扑稳定；不要在这段时间重复按快捷键。脚本会按 provider：
 
-1. 查找名为 `SidecarHeadlessFallback` 的独立虚拟屏；
-2. 缺少时调用 BetterDisplay CLI 创建并验证唯一屏幕；
+1. 根据 `VIRTUAL_DISPLAY_BACKEND` 选择项目内置 helper 或 BetterDisplay；
+2. 缺少时创建并验证唯一虚拟屏；
 3. 将虚拟屏上线后再请求 Sidecar；
 4. Sidecar 画面上线后将 iPad 设为主屏并再次验证。
 
-BetterDisplay 虚拟屏不能代替 Sidecar，也不能修复锁定的 iPad。没有 BetterDisplay、CLI 被禁用或 Pro/试用资格不足时，脚本会明确失败，不会播报虚假的“连接成功”。硬件显示适配器是否能改善某台 Mac 的无屏幕拓扑取决于 macOS 的显示识别结果，本项目没有把它作为自动化前置条件。
+项目内置虚拟屏由当前登录用户会话中的 helper 在连接期间持有；helper 退出后屏幕会从 WindowServer 消失。它不是登录项，也不会在打开 App 或刷新状态时启动。BetterDisplay 虚拟屏不能代替 Sidecar，也不能修复锁定的 iPad。选用 BetterDisplay 时，CLI 被禁用或 Pro/试用资格不足会明确失败，不会播报虚假的“连接成功”。
 
 ## 诊断与排障
 
@@ -184,7 +188,7 @@ BetterDisplay 虚拟屏不能代替 Sidecar，也不能修复锁定的 iPad。�
 
 - **没有发现 iPad / `SidecarErrorDomain -200`**：检查数据线、iPad 是否解锁并信任 Mac；无线模式检查两台设备距离、Apple Account、Wi-Fi、蓝牙和接力。
 - **`-201` 超时**：通常是 iPad 锁定。解锁 iPad 后再按一次；不要用重启代替解锁。
-- **连接请求成功但没有随航画面**：先检查 BetterDisplay 虚拟屏和显示器拓扑；脚本不会连续发送连接请求。
+- **连接请求成功但没有随航画面**：先检查所选虚拟屏后端和显示器拓扑；脚本不会连续发送连接请求。
 - **检测到多个 iPad**：在配置中设置准确的 `IPAD_NAME` 和 `IPAD_USB_SERIAL_NUMBER`。
 - **首次无线时没有反应**：接上显示器，在“系统设置 → 隐私与安全性 → 蓝牙”允许 Shortcuts 或相关工具，再重试。
 
@@ -235,7 +239,7 @@ bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
 
 ## 限制与隐私
 
-- 连接功能依赖 Apple 未公开的 `SidecarCore`；macOS 更新可能需要重新编译或调整选择器。
+- 连接功能依赖 Apple 未公开的 `SidecarCore`；内置虚拟屏还依赖 macOS 未公开的虚拟显示接口；macOS 更新可能需要重新编译或调整选择器。
 - Sidecar 只能在用户桌面会话中启动，不能显示 FileVault 解锁画面或登录前画面。
 - Wi-Fi、蓝牙、接力开关无法从 Mac 远程修改 iPad；Mac 侧的 Handoff 设置只是尽力写入，不能证明 iPad 侧已开启。
 - 脚本不会绕过 BetterDisplay 许可、TCC 权限、FileVault 或 macOS 安全策略。

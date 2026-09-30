@@ -8,8 +8,8 @@ requests `ForceAWDL` when no iPad cable is present.
 ## What it does
 
 - keeps a physical monitor path as a normal extended-display setup;
-- creates and verifies an independent BetterDisplay virtual screen for a
-  headless Mac when needed;
+- creates and verifies a fixed built-in virtual screen for a headless Mac, with
+  BetterDisplay available as an advanced provider;
 - refuses unknown state, ambiguous iPad names, and another active iPad session;
 - plays progress/success/failure sounds and optional Chinese speech;
 - performs one connection request and verifies both Sidecar state and an online
@@ -24,7 +24,8 @@ Mac, then run:
 ./installer/install-sidecar-auto.sh
 ```
 
-The installer builds `sidecarctl`, the display probe and the Bluetooth helper,
+The installer builds `sidecarctl`, the display probe, the Bluetooth helper and
+the resident `sidecar-virtual-display` helper,
 then installs them under `~/.local/bin`. It does not install BetterDisplay,
 create Shortcuts, grant TCC permissions or change FileVault settings.
 
@@ -45,8 +46,12 @@ upstream-derived CLI in `vendor/sidecarctl/`, and the LaunchAgent template in
 
 ## Limitations
 
-Sidecar Auto calls Apple's private `SidecarCore` API and can break after a
-macOS update. The iPad must be awake and unlocked. Wireless direct mode still
+Sidecar Auto calls Apple's private `SidecarCore` API. The built-in virtual
+screen also uses Apple's undocumented `SLVirtualDisplay`/`CGVirtualDisplay`
+runtime classes and must remain held by a user-session helper; a helper exit
+removes the screen. It is fixed to one 1920x1080/60Hz screen and can break
+after a macOS update. BetterDisplay remains available for advanced layouts.
+The iPad must be awake and unlocked. Wireless direct mode still
 requires Wi-Fi, Bluetooth, Handoff, the same Apple Account and Apple's
 Continuity conditions. FileVault and the login screen cannot be automated by a
 LaunchAgent. BetterDisplay is a separate product and headless CLI operations

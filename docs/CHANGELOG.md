@@ -14,6 +14,15 @@
 - Removed generated binaries, logs and machine-specific identifiers from the
   source distribution.
 - Documented licensing and attribution for the retained `sidecarctl` source.
+- Added the built-in resident virtual-display helper with `auto`, `builtin`,
+  and `betterdisplay` backend selection. The built-in profile is intentionally
+  fixed and its undocumented macOS API compatibility is called out.
+- Redesigned the setup app with a sidebar workflow, a focused overview, grouped
+  device/display/shortcut settings, clearer status pills, one-shot test controls,
+  and a bundled Sidecar Auto app icon.
+- Added an explicit Bluetooth permission flow: the app triggers the native macOS
+  confirmation only after the user clicks, refreshes after returning from Settings,
+  and avoids requesting unnecessary Accessibility or Screen Recording access.
 
 ## 2026-09-30
 

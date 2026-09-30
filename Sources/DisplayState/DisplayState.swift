@@ -34,7 +34,13 @@ private func displayKind(_ id: CGDirectDisplayID, _ name: String) -> String {
     // BetterDisplay reports the same output as "Generic Display".  Treat the
     // pair as virtual so a stale placeholder cannot block headless Sidecar.
     let genericPlaceholder = vendor == 0x756e6b6e && model == 0x76697274
-    if vendor == 2198 || genericPlaceholder || ["virtual", "dummy", "headless", "remote display"].contains(where: { n.contains($0) }) ||
+    // 2198 is BetterDisplay's virtual-screen vendor.  The built-in helper
+    // uses 0xF0F0, the vendor used by the open-source BetterDummy reference.
+    // Names remain a second signal because newer WindowServer versions can
+    // omit vendor metadata from the online display list.
+    let builtInFallbackName = n == "sidecarheadlessfallback" || n == "sidecarauto virtual" ||
+        n == "sidecarautovirtual"
+    if vendor == 2198 || vendor == 0xF0F0 || builtInFallbackName || genericPlaceholder || ["virtual", "dummy", "headless", "remote display"].contains(where: { n.contains($0) }) ||
        n == "generic" || n == "generic display" {
         return "virtual"
     }

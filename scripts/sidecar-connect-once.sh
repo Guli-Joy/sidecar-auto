@@ -58,6 +58,12 @@ esac
 : "${SIDECAR_CONNECT_TIMEOUT_SECONDS:=45}"
 : "${BETTERDISPLAY_CLI:=}"
 : "${BETTERDISPLAY_APP:=}"
+# Headless provider: builtin uses the bundled resident helper; betterdisplay
+# keeps the existing CLI path; auto prefers builtin and falls back only when
+# the private macOS API is unavailable.
+: "${VIRTUAL_DISPLAY_BACKEND:=auto}"
+: "${VIRTUAL_DISPLAY_HELPER:=$HOME/.local/bin/sidecar-virtual-display}"
+: "${BUILTIN_VIRTUAL_DISPLAY_NAME:=SidecarHeadlessFallback}"
 # This must be an independent BetterDisplay virtual screen.  A virtual screen
 # associated with the iPad is controlled by BetterDisplay's association rules
 # and cannot be brought online before Sidecar exists.
@@ -74,6 +80,7 @@ esac
 : "${SPEAK:=1}"
 : "${SIDECAR_AUTO_TEST_MODE:=0}"
 PROGRESS_SPEECH_PID=""
+ACTIVE_VIRTUAL_DISPLAY_BACKEND=""
 INITIAL_USB_FILE=""
 INITIAL_USB_CODE=""
 LOCK_DIR="$HOME/Library/Caches/sidecar-auto/explicit-action.lock"
@@ -386,6 +393,119 @@ resolve_betterdisplay_cli() {
     fi
     [ -n "$BETTERDISPLAY_CLI_RESOLVED" ]
 }
+virtual_backend_valid() {
+    case "${VIRTUAL_DISPLAY_BACKEND:-auto}" in auto|builtin|betterdisplay) return 0;; esac
+    log "invalid VIRTUAL_DISPLAY_BACKEND=${VIRTUAL_DISPLAY_BACKEND}"; return 64
+}
+resolve_builtin_virtual_helper() {
+    [ -x "${VIRTUAL_DISPLAY_HELPER:-}" ]
+}
+use_builtin_virtual() {
+    case "$VIRTUAL_DISPLAY_BACKEND" in
+        builtin) resolve_builtin_virtual_helper;;
+        auto) resolve_builtin_virtual_helper;;
+        *) return 1;;
+    esac
+}
+select_virtual_backend() {
+    virtual_backend_valid || return $?
+    case "$VIRTUAL_DISPLAY_BACKEND" in
+        builtin)
+            resolve_builtin_virtual_helper || {
+                log "built-in virtual-display helper not found: $VIRTUAL_DISPLAY_HELPER"
+                return 127
+            }
+            printf '%s\n' builtin
+            ;;
+        betterdisplay)
+            printf '%s\n' betterdisplay
+            ;;
+        auto)
+            if resolve_builtin_virtual_helper; then
+                printf '%s\n' builtin
+            else
+                printf '%s\n' betterdisplay
+            fi
+            ;;
+    esac
+}
+run_builtin_virtual() {
+    run_with_timeout "$BETTERDISPLAY_TIMEOUT_SECONDS" "$VIRTUAL_DISPLAY_HELPER" "$@"
+}
+builtin_virtual_status() {
+    run_builtin_virtual status 2>&1
+}
+builtin_virtual_online() {
+    local state code
+    state="$(builtin_virtual_status)"; code=$?
+    [ "$code" -eq 0 ] && printf '%s\n' "$state" | /usr/bin/grep -Eq '(^|[[:space:]])online=1([[:space:]]|$)'
+}
+builtin_virtual_display_id() {
+    local state
+    state="$(builtin_virtual_status)" || return 1
+    printf '%s\n' "$state" | /usr/bin/sed -n 's/.*display_id=\([0-9][0-9]*\).*/\1/p' | /usr/bin/tail -n 1
+}
+prepare_builtin_virtual() {
+    local output code deadline
+    output="$(run_builtin_virtual ensure --background 2>&1)"; code=$?
+    if [ "$code" -ne 0 ]; then
+        log "built-in virtual display failed to start (exit=$code): $output"
+        feedback "$SOUND_FAILURE" "项目内置虚拟屏启动失败"
+        notify_detail "$NOTIFY_TITLE" "项目内置虚拟屏启动失败，未连接随航。详情：$output"
+        return 20
+    fi
+    deadline=$((SECONDS + HEADLESS_DISPLAY_WAIT_SECONDS))
+    while (( SECONDS <= deadline )); do
+        if builtin_virtual_online; then
+            log "built-in virtual display is online: $(builtin_virtual_status)"
+            # Origin placement is best effort.  macOS has no public main-screen
+            # setter; the caller verifies the actual topology before claiming
+            # success.  BetterDisplay remains available for authoritative
+            # layout/main-screen control.
+            output="$(run_builtin_virtual set-main 2>&1)"; code=$?
+            if [ "$code" -ne 0 ]; then
+                log "built-in virtual display main placement was not confirmed (exit=$code): $output"
+                # CoreGraphics does not expose a stable set-main operation;
+                # the fallback only needs to be online for Sidecar creation.
+                # Continue and verify the actual Sidecar display after connect.
+            fi
+            return 0
+        fi
+        sleep "$DISPLAY_VERIFY_INTERVAL"
+    done
+    output="$(builtin_virtual_status)"
+    log "built-in virtual display did not become online: $output"
+    feedback "$SOUND_FAILURE" "项目内置虚拟屏未能上线"
+    notify_detail "$NOTIFY_TITLE" "项目内置虚拟屏未能上线，未连接随航。详情：$output"
+    return 21
+}
+builtin_virtual_set_main() {
+    local display_id="$1" output code
+    [ -n "$display_id" ] || return 1
+    output="$(run_builtin_virtual set-main "$display_id" 2>&1)"; code=$?
+    [ "$code" -eq 0 ] || log "built-in set-main failed (display=$display_id, exit=$code): $output"
+    return "$code"
+}
+builtin_sidecar_display_id() {
+    local output code
+    output="$(run_with_timeout 5 "$DISPLAY_STATE_BIN" 2>&1)"; code=$?
+    [ "$code" -eq 0 ] || return 1
+    printf '%s\n' "$output" | /usr/bin/awk '
+        /^display id=[0-9]+ kind=sidecar / { n++; id=$2; sub(/^id=/,"",id) }
+        END { if (n == 1) print id; else exit 1 }'
+}
+builtin_virtual_set_sidecar_main() {
+    local display_id output code
+    display_id="$(builtin_sidecar_display_id 2>/dev/null)" || return 1
+    [ -n "$display_id" ] || return 1
+    output="$(builtin_virtual_set_main "$display_id" 2>&1)"; code=$?
+    if [ "$code" -eq 0 ]; then
+        log "built-in provider requested Sidecar display $display_id as main: $output"
+        return 0
+    fi
+    log "built-in provider could not verify Sidecar display $display_id as main (exit=$code): $output"
+    return "$code"
+}
 run_betterdisplay() {
     run_with_timeout "$BETTERDISPLAY_TIMEOUT_SECONDS" "$BETTERDISPLAY_CLI_RESOLVED" "$@"
 }
@@ -637,10 +757,33 @@ recheck_display_topology() {
 }
 prepare_headless_fallback() {
     local identifiers identifier_code output code virtual_state virtual_code deadline
+    local selected_backend
+    selected_backend="$(select_virtual_backend 2>/dev/null)"
+    if [ "$selected_backend" = "builtin" ]; then
+        if prepare_builtin_virtual; then
+            ACTIVE_VIRTUAL_DISPLAY_BACKEND=builtin
+            return 0
+        fi
+        if [ "$VIRTUAL_DISPLAY_BACKEND" != "auto" ]; then
+            return 20
+        fi
+        log "built-in virtual display failed; auto backend is trying BetterDisplay"
+        run_builtin_virtual destroy >/dev/null 2>&1 || true
+        selected_backend=betterdisplay
+    elif [ "$VIRTUAL_DISPLAY_BACKEND" = "builtin" ]; then
+        feedback "$SOUND_FAILURE" "项目内置虚拟屏工具未安装"
+        notify "$NOTIFY_TITLE" "项目内置虚拟屏工具未安装，请先点击安装或修复"
+        return 127
+    elif [ "$selected_backend" != "betterdisplay" ]; then
+        feedback "$SOUND_FAILURE" "虚拟屏后端配置无效"
+        notify "$NOTIFY_TITLE" "VIRTUAL_DISPLAY_BACKEND 配置无效"
+        return 64
+    fi
+    ACTIVE_VIRTUAL_DISPLAY_BACKEND=betterdisplay
     if ! resolve_betterdisplay_cli; then
         log "headless preparation refused: BetterDisplay CLI/App not found"
         feedback "$SOUND_FAILURE" "没有显示器，找不到 BetterDisplay，未连接随航"
-        notify "$NOTIFY_TITLE" "无显示器模式需要 BetterDisplay 和虚拟屏幕"
+        notify "$NOTIFY_TITLE" "当前选择 BetterDisplay，但没有找到可用的 BetterDisplay 虚拟屏后端"
         return 10
     fi
     log "headless mode: BetterDisplay CLI=$BETTERDISPLAY_CLI_RESOLVED app=${BETTERDISPLAY_APP_RESOLVED:-none}"
@@ -1046,6 +1189,29 @@ probe_sidecar_display() {
 verify_connected_display() {
     local timeout="$1" deadline status_output status_code info info_code display_id display_output display_code
     local display_count display_count_code
+    if [ "$headless" -eq 1 ] && [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+        # The built-in provider has no BetterDisplay IPC.  Confirm the two
+        # independent postconditions that remain observable through supported
+        # interfaces: SidecarCore says the target is connected and WindowServer
+        # reports exactly one Sidecar display.  Main-screen arrangement is a
+        # separate best-effort operation and is intentionally not reported as
+        # a successful connection requirement here.
+        deadline=$((SECONDS + timeout))
+        while (( SECONDS <= deadline )); do
+            status_output="$(run_sidecar_status "$IPAD_NAME" 2>&1)"
+            status_code=$?
+            display_count="$(probe_sidecar_display 2>&1)"
+            display_count_code=$?
+            if [ "$status_code" -eq 0 ] && [ "$display_count_code" -eq 0 ] &&
+               [ "$display_count" -gt 0 ] 2>/dev/null; then
+                return 0
+            fi
+            [ "$timeout" -eq 0 ] && break
+            sleep "$DISPLAY_VERIFY_INTERVAL"
+        done
+        log "built-in Sidecar display verification failed: status=$status_code output=$status_output sidecar=$display_count"
+        return 1
+    fi
     if [ "$headless" -eq 1 ] && (! resolve_betterdisplay_cli || ! ensure_betterdisplay_running); then
         log "cannot start or query BetterDisplay to identify the target iPad display"
         return 1
@@ -1317,18 +1483,18 @@ fi
 if [ "$status_code" -eq 0 ]; then
     if verify_connected_display 2; then
         if [ "$headless" -eq 1 ]; then
-            if ! resolve_betterdisplay_cli || ! ensure_betterdisplay_running; then
+            if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+                builtin_virtual_set_sidecar_main || log "built-in provider could not verify Sidecar main status; connection remains valid because the Sidecar display is online"
+            elif ! resolve_betterdisplay_cli || ! ensure_betterdisplay_running; then
                 log "headless main-display handoff refused: BetterDisplay unavailable or could not start"
                 feedback "$SOUND_FAILURE" "随航已连接，但 BetterDisplay 不可用，无法切换主屏"
                 notify "$NOTIFY_TITLE" "BetterDisplay 不可用，无法设置 iPad 主屏"
                 exit 4
-            fi
-            if ! set_headless_sidecar_main; then
+            elif ! set_headless_sidecar_main; then
                 feedback "$SOUND_FAILURE" "随航已连接，但无法切换为主屏，请检查 BetterDisplay"
                 notify "$NOTIFY_TITLE" "随航会话存在，但无法设为主屏"
                 exit 4
-            fi
-            if ! verify_sidecar_main "$DISPLAY_VERIFY_SECONDS"; then
+            elif ! verify_sidecar_main "$DISPLAY_VERIFY_SECONDS"; then
                 feedback "$SOUND_FAILURE" "随航会话已连接，但 iPad 尚未成为主屏"
                 notify "$NOTIFY_TITLE" "未验证 iPad 主屏状态；没有重复连接"
                 exit 4
@@ -1344,8 +1510,13 @@ if [ "$status_code" -eq 0 ]; then
             feedback "$SOUND_SUCCESS" "随航画面已经就绪。为避免中断当前 iPad，没有切换连接方式；需要无线时请先断开再连接"
             notify "$NOTIFY_TITLE" "已有随航会话；未切换传输方式。要确保无线，请先断开再连接"
         elif [ "$headless" -eq 1 ]; then
-            feedback "$SOUND_SUCCESS" "无显示器模式，随航已就绪并设为主屏"
-            notify "$NOTIFY_TITLE" "无显示器模式：随航已就绪并设为主屏"
+            if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+                feedback "$SOUND_SUCCESS" "无显示器模式，随航已就绪；项目内置虚拟屏在线"
+                notify "$NOTIFY_TITLE" "无显示器模式：随航已就绪；项目内置虚拟屏在线"
+            else
+                feedback "$SOUND_SUCCESS" "无显示器模式，随航已就绪并设为主屏"
+                notify "$NOTIFY_TITLE" "无显示器模式：随航已就绪并设为主屏"
+            fi
         else
             feedback "$SOUND_SUCCESS" "随航画面已经就绪，没有重复连接"
             notify "$NOTIFY_TITLE" "随航显示已经就绪，未重复连接"
@@ -1397,13 +1568,14 @@ fi
 if [ "$code" -eq 0 ]; then
     if verify_connected_display "$DISPLAY_VERIFY_SECONDS"; then
         if [ "$headless" -eq 1 ]; then
-            if ! set_headless_sidecar_main; then
+            if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+                builtin_virtual_set_sidecar_main || log "built-in provider could not verify Sidecar main status; connection remains valid because the Sidecar display is online"
+            elif ! set_headless_sidecar_main; then
                 log "$TRANSPORT_LABEL Sidecar display online, but BetterDisplay could not make the iPad main"
                 feedback "$SOUND_FAILURE" "随航画面已出现，但无法将 iPad 设为主屏"
                 notify "$NOTIFY_TITLE" "无显示器模式：设置 iPad 主屏失败"
                 exit 4
-            fi
-            if ! verify_sidecar_main "$DISPLAY_VERIFY_SECONDS"; then
+            elif ! verify_sidecar_main "$DISPLAY_VERIFY_SECONDS"; then
                 log "$TRANSPORT_LABEL Sidecar display online, but CoreGraphics did not report Sidecar as main"
                 feedback "$SOUND_FAILURE" "连接请求成功，但 iPad 还没有成为主屏"
                 notify "$NOTIFY_TITLE" "连接已建立，但未验证 iPad 主屏状态"
@@ -1417,8 +1589,13 @@ if [ "$code" -eq 0 ]; then
         fi
         log "explicit $TRANSPORT_LABEL Sidecar connect succeeded and display is online: $output"
         if [ "$headless" -eq 1 ]; then
-            feedback "$SOUND_SUCCESS" "无显示器模式，${TRANSPORT_LABEL}随航已就绪，iPad 已设为主屏"
-            notify "$NOTIFY_TITLE" "无显示器模式：随航已就绪并设为主屏"
+            if [ "${ACTIVE_VIRTUAL_DISPLAY_BACKEND:-}" = "builtin" ]; then
+                feedback "$SOUND_SUCCESS" "无显示器模式，${TRANSPORT_LABEL}随航已就绪；项目内置虚拟屏在线"
+                notify "$NOTIFY_TITLE" "无显示器模式：随航已就绪；项目内置虚拟屏在线"
+            else
+                feedback "$SOUND_SUCCESS" "无显示器模式，${TRANSPORT_LABEL}随航已就绪，iPad 已设为主屏"
+                notify "$NOTIFY_TITLE" "无显示器模式：随航已就绪并设为主屏"
+            fi
         else
             feedback "$SOUND_SUCCESS" "${TRANSPORT_LABEL}随航画面已就绪，iPad 连接成功"
             notify "$NOTIFY_TITLE" "${TRANSPORT_LABEL}随航显示已就绪"
