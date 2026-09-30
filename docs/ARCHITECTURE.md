@@ -24,11 +24,12 @@ Sidecar Auto 把一次连接动作拆成“只读预检 → 一次状态改变 �
    ├─ 串行锁 + 开始提示
    ├─ 显示拓扑稳定采样 ─────┐
    ├─ sidecarctl snapshot ──┼─ 并行只读预检
-   ├─ USB / Wi-Fi / 蓝牙 ───┘
+   ├─ USB 检测 ─────────────┘
    │
    ├─ 有线：ForceUSB
    └─ 无线：ForceAWDL
           │
+          ├─ Wi-Fi / 蓝牙 / Handoff 按需准备
           ├─ 无显示器：BetterDisplay 独立虚拟屏
           └─ sidecarctl connect（只发起一次）
                     │

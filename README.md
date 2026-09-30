@@ -25,7 +25,7 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 
 1. 读取一次 Sidecar 设备快照，拒绝未知状态、重复名称和另一台 iPad 已占用的情况。
 2. 检查 USB 注册表。唯一匹配的 iPad 数据设备选择 `ForceUSB`；没有匹配设备选择 `ForceAWDL`。多台 iPad 没有配置序列号时停止，避免误连。
-3. 并行读取显示拓扑、Sidecar 状态和无线前置条件。
+3. 并行读取显示拓扑、Sidecar 状态和 USB 检测；无线开关在传输路径确定后按需准备。
 4. 没有实体显示器时检查 BetterDisplay 的 `SidecarHeadlessFallback` 虚拟屏；缺少时创建并验证，后续重复使用。
 5. 只发起一次连接请求，然后同时确认 Sidecar 会话和在线显示画面。API 返回成功但 iPad 没有画面时会报告失败，不会重复抢占设备。
 
