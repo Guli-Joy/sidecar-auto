@@ -14,7 +14,10 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 ## 文档
 
 - [安装与使用](#安装)
+- [普通用户 App 指南](docs/APP_GUIDE.md)
+- [App 发布与签名](docs/RELEASE.md)
 - [架构说明](docs/ARCHITECTURE.md)
+- [安全与权限模型](docs/SECURITY_MODEL.md)
 - [排障手册](docs/TROUBLESHOOTING.md)
 - [测试与发布边界](docs/TESTING.md)
 - [English overview](docs/README.en.md)
@@ -28,6 +31,7 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 ```text
 .
 ├── installer/                    # 一键安装脚本和 Finder 入口
+├── packaging/                    # App bundle 构建脚本和签名模板
 ├── scripts/                       # 连接、断开、诊断和快捷键脚本
 ├── Sources/                       # 本项目的显示探针和蓝牙助手源码
 ├── vendor/sidecarctl/             # 上游衍生的 Swift CLI（保留独立许可证）
@@ -37,6 +41,29 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 ```
 
 根目录只保留 GitHub 首页和许可所需的基础文件；安装后的命令统一放在 `~/.local/bin/`，所以已有快捷指令不需要随着仓库目录调整。
+
+## 普通用户 App
+
+不懂代码的用户应优先从 GitHub **Releases** 下载签名并完成公证的
+`Sidecar-Auto-Setup.dmg`，把 `Sidecar Auto Setup.app` 拖进“应用程序”，然后按
+[普通用户 App 指南](docs/APP_GUIDE.md)操作。App 自带预编译的 `sidecarctl`、显示
+状态探针、蓝牙助手和连接脚本；普通用户不需要安装 Swift、clang 或 Xcode
+Command Line Tools。
+
+设置助手会逐项显示 macOS、无线状态、目标 iPad、BetterDisplay 和配置文件状态，
+提供“安装 / 修复”“重新检查”“连接一次”和“断开一次”按钮。它不会在启动或刷新
+时自动抢占 iPad，不会保存密码，也不能替用户授予 macOS 或 iPad 的隐私权限。
+
+维护者可以在 macOS 上构建未签名的本地 App：
+
+```sh
+./packaging/build-sidecar-auto-app.sh --host-only
+./packaging/make-dmg.sh --app "dist/Sidecar Auto Setup.app"
+```
+
+默认构建 universal `arm64 + x86_64` App，输出到 `dist/Sidecar Auto Setup.app`。
+正式发布前还必须使用 Developer ID 签名、创建 DMG、提交 Apple 公证并 stapler；
+未签名构建适合开发测试，不适合直接发给普通用户。
 
 ## 工作方式
 

@@ -20,6 +20,7 @@ On a Mac with Xcode Command Line Tools installed, run:
 ```sh
 bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
 ./vendor/sidecarctl/build.sh --cli-only --build-only
+./packaging/build-sidecar-auto-app.sh --host-only --output "$(mktemp -d)"
 ```
 
 The installer performs the same checks plus parallel builds of the CLI,

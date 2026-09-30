@@ -5,7 +5,12 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${BUILD_DIR:-$HERE/build}"
-TARGET="$(uname -m)-apple-macosx13.0"
+# The normal developer path follows the host architecture.  Release builds
+# can set TARGET_ARCH explicitly (for example, arm64 or x86_64) so the app
+# packager can build each helper before combining them with lipo.
+TARGET_ARCH="${TARGET_ARCH:-$(uname -m)}"
+TARGET_OS_VERSION="${TARGET_OS_VERSION:-13.0}"
+TARGET="${TARGET_ARCH}-apple-macosx${TARGET_OS_VERSION}"
 BUILD_ONLY=0
 CLI_ONLY=0
 
@@ -19,6 +24,11 @@ done
 
 [ "$(uname -s)" = "Darwin" ] || { echo 'this project builds on macOS only' >&2; exit 1; }
 command -v swiftc >/dev/null 2>&1 || { echo 'swiftc not found; run xcode-select --install' >&2; exit 1; }
+
+case "$TARGET_ARCH" in
+    arm64|x86_64) ;;
+    *) printf 'unsupported TARGET_ARCH: %s\n' "$TARGET_ARCH" >&2; exit 64 ;;
+esac
 
 if [ -z "${SDKROOT:-}" ] && command -v xcrun >/dev/null 2>&1; then
     SDKROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"

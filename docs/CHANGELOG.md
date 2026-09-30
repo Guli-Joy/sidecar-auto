@@ -3,6 +3,12 @@
 ## Unreleased
 
 - Prepared a clean public source distribution for Sidecar Auto.
+- Added the native SwiftUI `Sidecar Auto Setup.app` build, with a visual
+  configuration guide, prebuilt runtime resources, status checks, and explicit
+  one-shot connect/disconnect controls.
+- Added universal App packaging, DMG creation, release signing guidance, and a
+  security model that separates Bluetooth authorization from radio state and
+  documents FileVault, Handoff, Shortcuts, and BetterDisplay limits.
 - Added a documented one-command installer, read-only doctor, USB transport
   detection, wireless preflight and headless BetterDisplay setup.
 - Removed generated binaries, logs and machine-specific identifiers from the

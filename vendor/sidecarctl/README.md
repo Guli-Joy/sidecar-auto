@@ -12,6 +12,10 @@ installer builds this component with:
 ./build.sh --cli-only --build-only
 ```
 
+The build follows the host architecture by default. Release packaging can set
+`TARGET_ARCH=arm64` or `TARGET_ARCH=x86_64` (and `TARGET_OS_VERSION=13.0`) to
+produce one slice at a time before combining slices with `lipo`.
+
 The component is derived from the MIT-licensed
 [sidecar-reconnect](https://github.com/craigblewett/sidecar-reconnect) project.
 Keep [`LICENSE`](LICENSE) with these files. The project [`NOTICE.md`](../../docs/NOTICE.md)

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Sidecar Auto 设置助手</string>
+	<key>CFBundleExecutable</key>
+	<string>SidecarAutoSetup</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.gulijoy.sidecar-auto.setup</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Sidecar Auto Setup</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>__VERSION__</string>
+	<key>CFBundleVersion</key>
+	<string>__BUILD_VERSION__</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSMultipleInstancesProhibited</key>
+	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Sidecar Auto 需要读取 Mac 蓝牙状态，帮助检查无线随航的连接条件。</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+</dict>
+</plist>

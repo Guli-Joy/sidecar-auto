@@ -17,12 +17,27 @@ jobs:
       - name: Check shell syntax
         run: |
           set -euo pipefail
-          for script in ./installer/install-sidecar-auto.sh ./scripts/*.sh ./installer/*.command; do
+          for script in ./installer/install-sidecar-auto.sh ./scripts/*.sh ./installer/*.command ./packaging/*.sh; do
             [ -f "$script" ] || continue
             bash -n "$script"
           done
       - name: Build bundled helpers and CLI
         run: ./installer/install-sidecar-auto.sh --build-only
+      - name: Build setup app bundle
+        run: |
+          set -euo pipefail
+          output="$(mktemp -d)"
+          ./packaging/build-sidecar-auto-app.sh --host-only --output "$output"
+          app="$output/Sidecar Auto Setup.app"
+          test -x "$app/Contents/MacOS/SidecarAutoSetup"
+          plutil -lint "$app/Contents/Info.plist"
+          for binary in \
+            "$app/Contents/MacOS/SidecarAutoSetup" \
+            "$app/Contents/Resources/bin/sidecarctl" \
+            "$app/Contents/Resources/bin/display-state" \
+            "$app/Contents/Resources/bin/sidecar-bluetooth-radio"; do
+            file "$binary" | grep -q 'Mach-O'
+          done
       - name: Check public tree
         run: |
           set -euo pipefail
