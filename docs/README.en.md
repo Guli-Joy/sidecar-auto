@@ -21,7 +21,7 @@ macOS 13+ and Xcode Command Line Tools are required. Copy the repository to the
 Mac, then run:
 
 ```sh
-./install-sidecar-auto.sh
+./installer/install-sidecar-auto.sh
 ```
 
 The installer builds `sidecarctl`, the display probe and the Bluetooth helper,
@@ -35,10 +35,10 @@ exec "$HOME/.local/bin/sidecar-connect-once.sh" auto
 ```
 
 Use the explicit `wired` or `wireless` arguments for troubleshooting. See the
-[Chinese guide](README.md), [architecture](docs/ARCHITECTURE.md), and
-[troubleshooting](docs/TROUBLESHOOTING.md) for the complete setup.
+[Chinese guide](../README.md), [architecture](ARCHITECTURE.md), and
+[troubleshooting](TROUBLESHOOTING.md) for the complete setup.
 
-The repository keeps the two install entry points at the root. Runtime shell
+The repository keeps the two install entry points in `installer/`. Runtime shell
 controllers live in `scripts/`, native helper sources in `Sources/`, the
 upstream-derived CLI in `vendor/sidecarctl/`, and the LaunchAgent template in
 `launchd/`. Installed command names under `~/.local/bin/` remain unchanged.
@@ -53,5 +53,4 @@ LaunchAgent. BetterDisplay is a separate product and headless CLI operations
 may require its Pro/trial entitlement.
 
 The automation scripts are MIT licensed. The retained `sidecarctl` source in
-`vendor/sidecarctl/` carries
-the upstream MIT notice; see [NOTICE.md](NOTICE.md).
+`vendor/sidecarctl/` carries the upstream MIT notice; see [NOTICE.md](NOTICE.md).

@@ -14,8 +14,8 @@ CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷
 本地可运行：
 
 ```sh
-bash -n ./install-sidecar-auto.sh ./scripts/*.sh
-./install-sidecar-auto.sh --build-only
+bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
+./installer/install-sidecar-auto.sh --build-only
 ```
 
 ## 手工验收矩阵

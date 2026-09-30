@@ -5,8 +5,8 @@ It is a small, dependency-free wrapper around macOS's private
 `SidecarCore` Objective-C classes.
 
 The public entry point is `Sources/CLI/main.swift`; shared framework probing,
-state snapshots and recovery code live in `Sources/Shared/`. The root installer
-builds this component with:
+state snapshots and recovery code live in `Sources/Shared/`. The project
+installer builds this component with:
 
 ```sh
 ./build.sh --cli-only --build-only
@@ -14,7 +14,7 @@ builds this component with:
 
 The component is derived from the MIT-licensed
 [sidecar-reconnect](https://github.com/craigblewett/sidecar-reconnect) project.
-Keep [`LICENSE`](LICENSE) with these files. The root [`NOTICE.md`](../../NOTICE.md)
+Keep [`LICENSE`](LICENSE) with these files. The project [`NOTICE.md`](../../docs/NOTICE.md)
 records the provenance and the local changes.
 
 The command requires macOS 13+ and Xcode Command Line Tools. It is not expected

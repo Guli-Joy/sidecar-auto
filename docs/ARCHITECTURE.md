@@ -14,7 +14,7 @@ Sidecar Auto 把一次连接动作拆成“只读预检 → 一次状态改变 �
 | `Sources/DisplayState/DisplayState.swift` | 使用 CoreGraphics/AppKit 统计实体、虚拟和 Sidecar 显示器 |
 | `Sources/BluetoothRadio/sidecar-bluetooth-radio.c` | 读取或准备 Mac 侧蓝牙控制器状态 |
 | `vendor/sidecarctl` | 上游衍生的 Swift CLI；设备快照和私有 SidecarCore 调用 |
-| `install-sidecar-auto.sh` | 预检、并行构建、产物验证和逐文件安装 |
+| `installer/install-sidecar-auto.sh` | 预检、并行构建、产物验证和逐文件安装 |
 
 ## 连接流程
 

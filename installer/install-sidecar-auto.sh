@@ -11,7 +11,8 @@
 set -euo pipefail
 umask 022
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALLER_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$INSTALLER_ROOT/.." && pwd)"
 SCRIPT_ROOT="$ROOT/scripts"
 SOURCE_ROOT="${SIDECAR_RECONNECT_ROOT:-$ROOT/vendor/sidecarctl}"
 BIN_DIR="${SIDECAR_AUTO_BIN_DIR:-$HOME/.local/bin}"

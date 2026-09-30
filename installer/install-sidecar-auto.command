@@ -1,8 +1,8 @@
 #!/bin/bash
 # Finder double-click entry point for people who received the project folder.
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
-"$ROOT/install-sidecar-auto.sh"
+INSTALLER_ROOT="$(cd "$(dirname "$0")" && pwd)"
+"$INSTALLER_ROOT/install-sidecar-auto.sh"
 status=$?
 
 printf '\n'

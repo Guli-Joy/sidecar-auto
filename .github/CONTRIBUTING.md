@@ -4,8 +4,8 @@ Thanks for helping improve Sidecar Auto.
 
 ## Before opening a change
 
-- Read the root [`README.md`](README.md) and the component notes in
-  [`vendor/sidecarctl/README.md`](vendor/sidecarctl/README.md).
+- Read the root [`README.md`](../README.md) and the component notes in
+  [`vendor/sidecarctl/README.md`](../vendor/sidecarctl/README.md).
 - Keep changes compatible with the documented macOS baseline (macOS 13+ unless
   the change states a narrower requirement).
 - Do not commit compiled binaries, app bundles, logs, `.DS_Store` files, swap
@@ -18,15 +18,15 @@ Thanks for helping improve Sidecar Auto.
 On a Mac with Xcode Command Line Tools installed, run:
 
 ```sh
-bash -n ./install-sidecar-auto.sh ./scripts/*.sh
+bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
 ./vendor/sidecarctl/build.sh --cli-only --build-only
 ```
 
-The root installer performs the same checks plus parallel builds of the CLI,
+The installer performs the same checks plus parallel builds of the CLI,
 display probe and Bluetooth helper:
 
 ```sh
-./install-sidecar-auto.sh
+./installer/install-sidecar-auto.sh
 ```
 
 Do not run a real Sidecar connection in CI. A real test needs an awake, unlocked

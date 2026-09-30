@@ -17,18 +17,23 @@ jobs:
       - name: Check shell syntax
         run: |
           set -euo pipefail
-          for script in ./install-sidecar-auto.sh ./scripts/*.sh ./*.command; do
+          for script in ./installer/install-sidecar-auto.sh ./scripts/*.sh ./installer/*.command; do
             [ -f "$script" ] || continue
             bash -n "$script"
           done
       - name: Build bundled helpers and CLI
-        run: ./install-sidecar-auto.sh --build-only
+        run: ./installer/install-sidecar-auto.sh --build-only
       - name: Check public tree
         run: |
           set -euo pipefail
           test -s README.md
           test -s LICENSE
-          test -s NOTICE.md
+          test -s docs/NOTICE.md
+          test ! -e install-sidecar-auto.sh
+          test ! -e install-sidecar-auto.command
+          test ! -e CHANGELOG.md
+          test ! -e NOTICE.md
+          test ! -e README.en.md
           plutil -lint launchd/com.sidecarauto.login-ready.plist.template
           if find . \( -name .DS_Store -o -name '*.swp' \) -print | grep -q .; then
             echo 'generated or editor files are present' >&2
