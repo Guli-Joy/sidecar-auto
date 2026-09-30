@@ -195,7 +195,7 @@ launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sidecarauto.log
 
 ## 开发和验证
 
-项目按用途组织：连接、断开、诊断和安装后的运行脚本位于 `scripts/`；显示探针和蓝牙助手源码位于 `Sources/`；从上游保留并修改的 Swift CLI 位于 `vendor/sidecarctl/`；登录提示 LaunchAgent 模板位于 `launchd/`；一键安装入口位于 `installer/`。根目录只保留项目首页、许可证和 Git 忽略规则。构建 Swift CLI 不会安装或启动菜单栏应用。
+项目按用途组织：连接、断开、诊断和安装后的运行脚本位于 `scripts/`；显示探针和蓝牙助手源码位于 `Sources/`；从上游保留并修改的 Swift CLI 位于 `vendor/sidecarctl/`；登录提示 LaunchAgent 模板位于 `launchd/`；一键安装入口位于 `installer/`。根目录只保留项目首页、许可证和 GitHub 配置。构建 Swift CLI 不会安装或启动菜单栏应用。
 
 提交前运行：
 
