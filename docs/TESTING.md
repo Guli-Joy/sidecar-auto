@@ -1,0 +1,34 @@
+# 测试与发布边界
+
+## 自动化检查
+
+CI 只做不会占用用户设备的检查：
+
+- Bash 语法检查；
+- Swift CLI-only 编译；
+- `DisplayState.swift` 和蓝牙 helper 的 macOS 构建；
+- plist 和发布目录检查。
+
+CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷指令。
+
+本地可运行：
+
+```sh
+bash -n ./*.sh
+./install-sidecar-auto.sh --build-only
+```
+
+## 手工验收矩阵
+
+真实 Sidecar 测试需要一台 Mac 和一台可解锁的 iPad。每次报告应记录 macOS 版本、Mac 架构、连接方式、是否有实体显示器、是否加入路由器、iPad 是否解锁以及 BetterDisplay 版本。
+
+| 场景 | 目标 |
+| --- | --- |
+| USB + 实体显示器 | 确认 `ForceUSB`、Sidecar 画面和扩展屏布局 |
+| USB + 无实体显示器 | 确认虚拟屏创建、iPad 主屏和画面验证 |
+| AWDL + 实体显示器 | 确认 `ForceAWDL` 和无线前置条件 |
+| AWDL + 无路由器 + 无实体显示器 | 单独记录；当前不把它当成所有 Mac 都已验收 |
+| 已有其他 iPad 会话 | 必须停止并播报拒绝，不能抢占 |
+| iPad 锁定 | 必须报告用户动作，不应循环重试 |
+
+当前项目在一台 Apple silicon Mac 上完成过 USB 实机验证，也完成过带实体显示器、连接家庭 Wi-Fi 的无线实机验证。无路由器且无实体显示器的组合仍取决于 macOS、硬件、权限和 BetterDisplay 状态，不应在发布说明中写成普遍保证。

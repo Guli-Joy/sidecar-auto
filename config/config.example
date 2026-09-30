@@ -1,0 +1,12 @@
+# Copy this file to ~/.config/sidecar-auto/config after installation.
+# The installer creates an equivalent file automatically and preserves it on
+# upgrades.
+IPAD_NAME="iPad"
+# IPAD_USB_SERIAL_NUMBER=""
+AUTO_ENABLE_HANDOFF=1
+VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
+
+# Optional audio and timeout overrides:
+# SPEAK=0
+# DISPLAY_VERIFY_SECONDS=12
+# SIDECAR_CONNECT_TIMEOUT_SECONDS=45

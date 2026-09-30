@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-checks:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          set -euo pipefail
+          for script in ./*.sh ./*.command; do
+            [ -f "$script" ] || continue
+            bash -n "$script"
+          done
+      - name: Build bundled helpers and CLI
+        run: ./install-sidecar-auto.sh --build-only
+      - name: Check public tree
+        run: |
+          set -euo pipefail
+          test -s README.md
+          test -s LICENSE
+          test -s NOTICE.md
+          plutil -lint com.sidecarauto.login-ready.plist.template
+          if find . \( -name .DS_Store -o -name '*.swp' \) -print | grep -q .; then
+            echo 'generated or editor files are present' >&2
+            exit 1
+          fi
