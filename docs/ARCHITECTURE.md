@@ -6,14 +6,14 @@ Sidecar Auto 把一次连接动作拆成“只读预检 → 一次状态改变 �
 
 | 组件 | 作用 |
 | --- | --- |
-| `sidecar-connect-once.sh` | 快捷指令入口；串行锁、音效、语音、显示拓扑和 USB/无线决策 |
-| `sidecar-connect-wireless-once.sh` | 明确请求 `ForceAWDL` 的排障入口 |
-| `sidecar-disconnect-once.sh` | 一次断开，不自动重连 |
-| `sidecar-doctor.sh` | 只读诊断，不改变设备和设置 |
-| `sidecar-ipad-usb-detect.sh` | 从 IORegistry 判断是否存在唯一 iPad USB 数据设备 |
-| `DisplayState.swift` | 使用 CoreGraphics/AppKit 统计实体、虚拟和 Sidecar 显示器 |
-| `sidecar-bluetooth-radio.c` | 读取或准备 Mac 侧蓝牙控制器状态 |
-| `Sources/sidecarctl` | Swift CLI；一次快照、设备解析和私有 SidecarCore 调用 |
+| `scripts/sidecar-connect-once.sh` | 快捷指令入口；串行锁、音效、语音、显示拓扑和 USB/无线决策 |
+| `scripts/sidecar-connect-wireless-once.sh` | 明确请求 `ForceAWDL` 的排障入口 |
+| `scripts/sidecar-disconnect-once.sh` | 一次断开，不自动重连 |
+| `scripts/sidecar-doctor.sh` | 只读诊断，不改变设备和设置 |
+| `scripts/sidecar-ipad-usb-detect.sh` | 从 IORegistry 判断是否存在唯一 iPad USB 数据设备 |
+| `Sources/DisplayState/DisplayState.swift` | 使用 CoreGraphics/AppKit 统计实体、虚拟和 Sidecar 显示器 |
+| `Sources/BluetoothRadio/sidecar-bluetooth-radio.c` | 读取或准备 Mac 侧蓝牙控制器状态 |
+| `vendor/sidecarctl` | 上游衍生的 Swift CLI；设备快照和私有 SidecarCore 调用 |
 | `install-sidecar-auto.sh` | 预检、并行构建、产物验证和逐文件安装 |
 
 ## 连接流程

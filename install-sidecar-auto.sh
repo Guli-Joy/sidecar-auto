@@ -12,7 +12,8 @@ set -euo pipefail
 umask 022
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SOURCE_ROOT="${SIDECAR_RECONNECT_ROOT:-$ROOT/Sources/sidecarctl}"
+SCRIPT_ROOT="$ROOT/scripts"
+SOURCE_ROOT="${SIDECAR_RECONNECT_ROOT:-$ROOT/vendor/sidecarctl}"
 BIN_DIR="${SIDECAR_AUTO_BIN_DIR:-$HOME/.local/bin}"
 CONFIG_DIR="${SIDECAR_AUTO_CONFIG_DIR:-$HOME/.config/sidecar-auto}"
 CONFIG_FILE="$CONFIG_DIR/config"
@@ -92,15 +93,15 @@ check_sources() {
         fail "找不到随附的 sidecarctl 构建脚本：$SOURCE_ROOT/build.sh"
     local source
     for source in \
-        "$ROOT/DisplayState.swift" \
-        "$ROOT/sidecar-bluetooth-radio.c" \
-        "$ROOT/sidecar-connect-once.sh" \
-        "$ROOT/sidecar-connect-wireless-once.sh" \
-        "$ROOT/sidecar-ipad-usb-detect.sh" \
-        "$ROOT/sidecar-disconnect-once.sh" \
-        "$ROOT/sidecar-hotkey.sh" \
-        "$ROOT/sidecar-login-ready.sh" \
-        "$ROOT/sidecar-doctor.sh"; do
+        "$ROOT/Sources/DisplayState/DisplayState.swift" \
+        "$ROOT/Sources/BluetoothRadio/sidecar-bluetooth-radio.c" \
+        "$SCRIPT_ROOT/sidecar-connect-once.sh" \
+        "$SCRIPT_ROOT/sidecar-connect-wireless-once.sh" \
+        "$SCRIPT_ROOT/sidecar-ipad-usb-detect.sh" \
+        "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
+        "$SCRIPT_ROOT/sidecar-hotkey.sh" \
+        "$SCRIPT_ROOT/sidecar-login-ready.sh" \
+        "$SCRIPT_ROOT/sidecar-doctor.sh"; do
         [ -r "$source" ] || fail "缺少安装源文件：$source"
     done
 }
@@ -161,11 +162,11 @@ build_outputs() {
     ) >"$STAGE/build-sidecarctl.log" 2>&1 &
     local cli_pid=$!
     (
-        SDKROOT="$MACOS_SDK" "$SWIFTC" -O "$ROOT/DisplayState.swift" -o "$STAGE/display-state"
+        SDKROOT="$MACOS_SDK" "$SWIFTC" -O "$ROOT/Sources/DisplayState/DisplayState.swift" -o "$STAGE/display-state"
     ) >"$STAGE/build-display-state.log" 2>&1 &
     local display_pid=$!
     (
-        SDKROOT="$MACOS_SDK" "$CLANG" -O2 -framework IOBluetooth "$ROOT/sidecar-bluetooth-radio.c" \
+        SDKROOT="$MACOS_SDK" "$CLANG" -O2 -framework IOBluetooth "$ROOT/Sources/BluetoothRadio/sidecar-bluetooth-radio.c" \
             -o "$STAGE/sidecar-bluetooth-radio"
     ) >"$STAGE/build-bluetooth.log" 2>&1 &
     local bluetooth_pid=$!
@@ -193,13 +194,13 @@ build_outputs() {
 
     local script
     for script in \
-        "$ROOT/sidecar-connect-once.sh" \
-        "$ROOT/sidecar-connect-wireless-once.sh" \
-        "$ROOT/sidecar-ipad-usb-detect.sh" \
-        "$ROOT/sidecar-disconnect-once.sh" \
-        "$ROOT/sidecar-hotkey.sh" \
-        "$ROOT/sidecar-login-ready.sh" \
-        "$ROOT/sidecar-doctor.sh"; do
+        "$SCRIPT_ROOT/sidecar-connect-once.sh" \
+        "$SCRIPT_ROOT/sidecar-connect-wireless-once.sh" \
+        "$SCRIPT_ROOT/sidecar-ipad-usb-detect.sh" \
+        "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
+        "$SCRIPT_ROOT/sidecar-hotkey.sh" \
+        "$SCRIPT_ROOT/sidecar-login-ready.sh" \
+        "$SCRIPT_ROOT/sidecar-doctor.sh"; do
         bash -n "$script" || fail "Shell 语法检查失败：$script"
     done
 }
@@ -274,7 +275,7 @@ EOF
         if [ -f "$STAGE/$name" ]; then
             cp "$STAGE/$name" "$INSTALL_STAGE/$name"
         else
-            cp "$ROOT/$name" "$INSTALL_STAGE/$name"
+            cp "$SCRIPT_ROOT/$name" "$INSTALL_STAGE/$name"
         fi
         chmod 0755 "$INSTALL_STAGE/$name"
     done

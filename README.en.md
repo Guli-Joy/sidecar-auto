@@ -38,6 +38,11 @@ Use the explicit `wired` or `wireless` arguments for troubleshooting. See the
 [Chinese guide](README.md), [architecture](docs/ARCHITECTURE.md), and
 [troubleshooting](docs/TROUBLESHOOTING.md) for the complete setup.
 
+The repository keeps the two install entry points at the root. Runtime shell
+controllers live in `scripts/`, native helper sources in `Sources/`, the
+upstream-derived CLI in `vendor/sidecarctl/`, and the LaunchAgent template in
+`launchd/`. Installed command names under `~/.local/bin/` remain unchanged.
+
 ## Limitations
 
 Sidecar Auto calls Apple's private `SidecarCore` API and can break after a
@@ -47,5 +52,6 @@ Continuity conditions. FileVault and the login screen cannot be automated by a
 LaunchAgent. BetterDisplay is a separate product and headless CLI operations
 may require its Pro/trial entitlement.
 
-The root automation is MIT licensed. The retained `sidecarctl` source carries
+The automation scripts are MIT licensed. The retained `sidecarctl` source in
+`vendor/sidecarctl/` carries
 the upstream MIT notice; see [NOTICE.md](NOTICE.md).

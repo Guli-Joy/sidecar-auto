@@ -17,7 +17,7 @@ jobs:
       - name: Check shell syntax
         run: |
           set -euo pipefail
-          for script in ./*.sh ./*.command; do
+          for script in ./install-sidecar-auto.sh ./scripts/*.sh ./*.command; do
             [ -f "$script" ] || continue
             bash -n "$script"
           done
@@ -29,7 +29,7 @@ jobs:
           test -s README.md
           test -s LICENSE
           test -s NOTICE.md
-          plutil -lint com.sidecarauto.login-ready.plist.template
+          plutil -lint launchd/com.sidecarauto.login-ready.plist.template
           if find . \( -name .DS_Store -o -name '*.swp' \) -print | grep -q .; then
             echo 'generated or editor files are present' >&2
             exit 1

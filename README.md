@@ -19,6 +19,22 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 - [测试与发布边界](docs/TESTING.md)
 - [English overview](README.en.md)
 
+## 目录结构
+
+```text
+.
+├── install-sidecar-auto.sh       # 一键安装入口
+├── install-sidecar-auto.command   # Finder 双击入口
+├── scripts/                       # 连接、断开、诊断和快捷键脚本
+├── Sources/                       # 本项目的显示探针和蓝牙助手源码
+├── vendor/sidecarctl/             # 上游衍生的 Swift CLI（保留独立许可证）
+├── launchd/                       # 登录后提示音 LaunchAgent 模板
+├── config/                        # 配置示例
+└── docs/                          # 架构、排障和测试文档
+```
+
+安装后的命令仍统一放在 `~/.local/bin/`，所以已有快捷指令不需要随着仓库目录调整。
+
 ## 工作方式
 
 智能入口 `sidecar-connect-once.sh auto` 在发起请求前完成以下检查：
@@ -161,7 +177,7 @@ mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Library/Logs"
 sed \
   -e "s|__LOGIN_READY_PATH__|$HOME/.local/bin/sidecar-login-ready.sh|g" \
   -e "s|__LOG_PATH__|$HOME/Library/Logs/sidecar-login-ready|g" \
-  "$ROOT/com.sidecarauto.login-ready.plist.template" \
+  "$ROOT/launchd/com.sidecarauto.login-ready.plist.template" \
   > "$HOME/Library/LaunchAgents/com.sidecarauto.login-ready.plist"
 launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sidecarauto.login-ready.plist"
 ```
@@ -176,13 +192,13 @@ launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sidecarauto.log
 
 ## 开发和验证
 
-根目录脚本仅使用 macOS 系统工具。Swift CLI 源码位于 `Sources/sidecarctl/Sources/Shared/` 和 `Sources/sidecarctl/Sources/CLI/`；构建脚本通过 `--cli-only --build-only` 编译 `sidecarctl`，不会安装或启动菜单栏应用。根安装器还会构建显示探针和蓝牙助手。
+项目按用途组织：连接、断开、诊断和安装后的运行脚本位于 `scripts/`；显示探针和蓝牙助手源码位于 `Sources/`；从上游保留并修改的 Swift CLI 位于 `vendor/sidecarctl/`；登录提示 LaunchAgent 模板位于 `launchd/`。根目录保留 README、项目许可与说明，以及一键安装入口。构建 Swift CLI 不会安装或启动菜单栏应用。
 
 提交前运行：
 
 ```sh
 bash -n ./*.sh
-./Sources/sidecarctl/build.sh --cli-only --build-only
+./vendor/sidecarctl/build.sh --cli-only --build-only
 ```
 
 不要在 CI 中执行真实 Sidecar 连接；它会占用用户的显示器，需要解锁且可能弹出系统提示。请在报告中记录 macOS 版本、Mac 架构、USB/无线方式、是否有实体显示器和 iPad 是否解锁。
@@ -198,4 +214,4 @@ bash -n ./*.sh
 
 ## 许可证和第三方代码
 
-根目录的自动化代码使用 MIT License，详见 [`LICENSE`](LICENSE)。`Sources/sidecarctl` 中保留的上游 MIT 版权必须保留，来源和范围见 [`NOTICE.md`](NOTICE.md)。项目与 Apple 或 BetterDisplay 均无隶属或背书关系。
+自动化代码使用 MIT License，详见 [`LICENSE`](LICENSE)。`vendor/sidecarctl` 中保留的上游 MIT 版权必须保留，来源和范围见 [`NOTICE.md`](NOTICE.md)。项目与 Apple 或 BetterDisplay 均无隶属或背书关系。

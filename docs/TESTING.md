@@ -6,7 +6,7 @@ CI 只做不会占用用户设备的检查：
 
 - Bash 语法检查；
 - Swift CLI-only 编译；
-- `DisplayState.swift` 和蓝牙 helper 的 macOS 构建；
+- `Sources/DisplayState/DisplayState.swift` 和 `Sources/BluetoothRadio/sidecar-bluetooth-radio.c` 的 macOS 构建；
 - plist 和发布目录检查。
 
 CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷指令。
@@ -14,7 +14,7 @@ CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷
 本地可运行：
 
 ```sh
-bash -n ./*.sh
+bash -n ./install-sidecar-auto.sh ./scripts/*.sh
 ./install-sidecar-auto.sh --build-only
 ```
 
