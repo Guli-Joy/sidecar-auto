@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added a read-only BetterDisplay inspection panel, cancellable manual operations
+  with live diagnostic-tail updates, and a repeatable signed release script for
+  notarized DMG production.
+
 - Added a first-run configuration wizard, USB iPad scanning with automatic target
   field filling, separate Mac/iPad readiness messaging, and live connection-stage
   feedback in the manual test view.

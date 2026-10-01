@@ -21,6 +21,7 @@ jobs:
             [ -f "$script" ] || continue
             bash -n "$script"
           done
+          bash -n ./tests/*.sh
       - name: Run safe USB detector tests
         run: |
           set -euo pipefail

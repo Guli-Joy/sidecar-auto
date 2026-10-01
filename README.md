@@ -68,6 +68,10 @@ Command Line Tools。
 ./packaging/make-dmg.sh --app "dist/Sidecar Auto Setup.app"
 ```
 
+有 Developer ID 和已保存的 notarytool profile 时，可以使用
+`./packaging/release-sidecar-auto.sh` 一次完成签名、公证、DMG 和 SHA256；普通
+开发构建不需要这些凭据。
+
 默认构建 universal `arm64 + x86_64` App，输出到 `dist/Sidecar Auto Setup.app`。
 正式发布前还必须使用 Developer ID 签名、创建 DMG、提交 Apple 公证并 stapler；
 未签名构建适合开发测试，不适合直接发给普通用户。

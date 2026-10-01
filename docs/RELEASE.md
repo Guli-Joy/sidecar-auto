@@ -21,6 +21,20 @@
 
 ## 签名与公证
 
+推荐使用仓库内的发布包装脚本，它会执行构建、嵌套代码签名、校验、notarytool
+公证、stapler、Gatekeeper 检查、DMG 和 SHA256 文件生成：
+
+```sh
+./packaging/release-sidecar-auto.sh \
+  --version 0.3.2 \
+  --identity "Developer ID Application: Example Company (TEAMID)" \
+  --keychain-profile "sidecar-auto-notary"
+```
+
+脚本不会把证书、Apple Account 或公证令牌写入仓库；`notarytool` 只读取你已经
+保存到钥匙串的 profile。没有 Developer ID 或钥匙串 profile 时不要把未签名包
+发布给普通用户。
+
 使用 Developer ID Application 身份构建：
 
 ```sh

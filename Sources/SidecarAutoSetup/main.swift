@@ -129,9 +129,12 @@ final class SetupModel: ObservableObject {
     @Published var isOperating = false
     @Published var operationLog = ""
     @Published var operationStage = ""
+    @Published var isCancelRequested = false
     @Published var isRequestingPermission = false
     @Published var isScanningIPad = false
     @Published var scanMessage = ""
+    @Published var betterDisplayReport = "尚未执行 BetterDisplay 只读检查。"
+    @Published var isInspectingBetterDisplay = false
 
     private let fileManager = FileManager.default
     private var bluetoothPermissionRequester: BluetoothPermissionRequester?
@@ -267,6 +270,38 @@ final class SetupModel: ObservableObject {
                 self.scanMessage = "扫描失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无法读取 USB 状态" : result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
             }
         }
+    }
+
+    /// Inspect BetterDisplay without launching it or changing display state.
+    /// This makes the optional provider understandable before a headless test.
+    func inspectBetterDisplay() {
+        guard !isInspectingBetterDisplay else { return }
+        isInspectingBetterDisplay = true
+        betterDisplayReport = "正在读取 BetterDisplay 安装、进程和只读能力……"
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.betterDisplayInspection()
+        }
+        Task { @MainActor [weak self] in
+            let report = await worker.value
+            self?.betterDisplayReport = report
+            self?.isInspectingBetterDisplay = false
+        }
+    }
+
+    func cancelOperation() {
+        guard isOperating else { return }
+        isCancelRequested = true
+        operationStage = "正在请求取消；正在等待当前命令退出…"
+        let pidURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Caches/sidecar-auto/active-operation.pid")
+        guard let text = try? String(contentsOf: pidURL, encoding: .utf8),
+              let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
+            operationLog += "\n⚠️ 找不到当前操作进程；脚本会在当前阶段结束后停止。\n"
+            return
+        }
+        let killer = Process()
+        killer.executableURL = URL(fileURLWithPath: "/bin/kill")
+        killer.arguments = ["-TERM", String(pid)]
+        try? killer.run()
     }
 
     func perform(_ action: CheckAction) {
@@ -440,11 +475,13 @@ final class SetupModel: ObservableObject {
         }
 
         isOperating = true
+        isCancelRequested = false
         operationStage = startMessage
         operationLog = "\(startMessage)\n"
         message = startMessage
         let worker = Task.detached(priority: .userInitiated) {
-            Self.execute(executable: executable, arguments: arguments)
+            Self.execute(executable: executable, arguments: arguments,
+                         pidFile: "\(NSHomeDirectory())/Library/Caches/sidecar-auto/active-operation.pid")
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -474,10 +511,12 @@ final class SetupModel: ObservableObject {
                 self.operationLog += "\n❌ \(operationLabel)失败（退出码 \(result.status)）\n"
             }
             self.isOperating = false
-            self.operationStage = result.status == 0 ? "操作完成" : "操作失败"
+            self.operationStage = self.isCancelRequested ? "操作已取消" : (result.status == 0 ? "操作完成" : "操作失败")
             self.message = result.status == 0
                 ? "\(operationLabel)完成；请确认 iPad 是否出现随航画面。"
-                : "\(operationLabel)失败（退出码 \(result.status)）；请查看输出和诊断。"
+                : self.isCancelRequested
+                    ? "\(operationLabel)已取消；请确认当前没有残留随航会话。"
+                    : "\(operationLabel)失败（退出码 \(result.status)）；请查看输出和诊断。"
             self.refresh()
         }
     }
@@ -486,6 +525,7 @@ final class SetupModel: ObservableObject {
         while isOperating {
             if let tail = sidecarDiagnosticTail(), !tail.isEmpty {
                 operationStage = Self.operationStage(from: tail, fallback: "正在执行\(operationLabel)…")
+                operationLog = "正在执行\(operationLabel)…\n\n最近日志：\n\(tail)"
             }
             try? await Task.sleep(nanoseconds: 700_000_000)
         }
@@ -990,6 +1030,41 @@ final class SetupModel: ObservableObject {
         return (false, "未发现 BetterDisplay；项目内置虚拟屏可独立工作，BetterDisplay 仅用于高级后端")
     }
 
+    private nonisolated static func betterDisplayInspection() -> String {
+        let candidates = [
+            "/Applications/BetterDisplay.app",
+            "\(NSHomeDirectory())/Applications/BetterDisplay.app"
+        ]
+        let app = candidates.first { FileManager.default.fileExists(atPath: $0) }
+        let externalCLI = command("/usr/bin/which", ["betterdisplaycli"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let bundledCLI = app.map { "\($0)/Contents/MacOS/BetterDisplay" }
+            .flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+        let cli = externalCLI.isEmpty ? bundledCLI : externalCLI
+        guard let cli else {
+            return "未发现 BetterDisplay.app 或 CLI。当前可以继续使用项目内置虚拟屏；只有选择 BetterDisplay 高级方案时才需要安装它。"
+        }
+        let running = !command("/usr/bin/pgrep", ["-x", "BetterDisplay"]).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        var lines = [
+            "已发现：\(app ?? "BetterDisplay CLI")",
+            "CLI：\(cli)",
+            "进程：\(running ? "正在运行" : "未运行（只读检查不会自动启动）")"
+        ]
+        guard running else {
+            lines.append("Pro/试用资格：需要先在有显示器时打开 BetterDisplay 后再检查")
+            lines.append("虚拟屏列表：未读取（应用未运行）")
+            return lines.joined(separator: "\n")
+        }
+        let pro = command(cli, ["get", "-proAvailable"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        lines.append("Pro/试用资格：\(pro.isEmpty ? "无法读取" : pro)")
+        let identifiers = command(cli, ["get", "-identifiers"])
+        let identifierLooksValid = identifiers.contains("[") || identifiers.contains("{")
+        lines.append("虚拟屏列表：\(identifierLooksValid ? "已读取" : "无法读取")")
+        lines.append("本检查只读，不会创建、启用或移动显示器。")
+        return lines.joined(separator: "\n")
+    }
+
     private nonisolated static func builtinVirtualDisplayStatus() -> (ok: Bool, detail: String) {
         let path = "\(NSHomeDirectory())/.local/bin/sidecar-virtual-display"
         guard FileManager.default.isExecutableFile(atPath: path) else {
@@ -1111,17 +1186,25 @@ final class SetupModel: ObservableObject {
         let output: String
     }
 
-    private nonisolated static func execute(executable: String, arguments: [String]) -> ProcessResult {
+    private nonisolated static func execute(executable: String, arguments: [String], pidFile: String? = nil) -> ProcessResult {
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
         process.standardOutput = pipe
         process.standardError = pipe
+        var pidURL: URL?
         do {
             try process.run()
+            if let pidFile {
+                let url = URL(fileURLWithPath: pidFile)
+                try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try? "\(process.processIdentifier)\n".write(to: url, atomically: true, encoding: .utf8)
+                pidURL = url
+            }
             let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             process.waitUntilExit()
+            if let pidURL { try? FileManager.default.removeItem(at: pidURL) }
             return ProcessResult(status: process.terminationStatus, output: output)
         } catch {
             return ProcessResult(status: 127, output: "无法启动 \(executable)：\(error.localizedDescription)\n")
@@ -1564,6 +1647,20 @@ private struct SetupView: View {
                     .disabled(model.isRequestingPermission || model.isInstalling || model.isOperating)
                 }
             }
+            Panel {
+                PanelTitle(title: "BetterDisplay 检查向导", subtitle: "只读取安装、运行和能力状态，不会创建或移动虚拟屏。", symbol: "display.2")
+                HStack(alignment: .top, spacing: 12) {
+                    Text(model.betterDisplayReport)
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button(model.isInspectingBetterDisplay ? "检查中…" : "检查 BetterDisplay") {
+                        model.inspectBetterDisplay()
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isInspectingBetterDisplay || model.isInstalling || model.isOperating)
+                }
+            }
             if model.checks.isEmpty {
                 Panel { HStack { ProgressView(); Text("正在读取本机状态……").foregroundStyle(.secondary) } }
             } else {
@@ -1591,6 +1688,11 @@ private struct SetupView: View {
                     Button { model.disconnect() } label: { Label("断开一次", systemImage: "rectangle.portrait.and.arrow.right") }
                         .buttonStyle(.bordered).disabled(model.isOperating || model.isInstalling || !model.canRunConnection)
                     if model.isOperating { ProgressView().controlSize(.small) }
+                    if model.isOperating {
+                        Button("取消") { model.cancelOperation() }
+                            .buttonStyle(.bordered)
+                            .disabled(model.isCancelRequested)
+                    }
                 }
                 if !model.canRunConnection {
                     Label(model.connectionPrerequisiteSummary, systemImage: "info.circle")
