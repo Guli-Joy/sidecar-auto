@@ -86,6 +86,9 @@ Command Line Tools。
 4. 没有实体显示器时按配置准备 `SidecarHeadlessFallback`：`auto` 优先项目内置固定虚拟屏，`builtin` 完全不调用 BetterDisplay，`betterdisplay` 使用 BetterDisplay 的高级参数。
 5. 只发起一次连接请求，然后同时确认 Sidecar 会话和在线显示画面。API 返回成功但 iPad 没有画面时会报告失败，不会重复抢占设备。
 
+如果连接在创建无显示器备用屏的过程中被取消或失败，控制器只会回收本次操作创建
+的项目内置屏或启用的 BetterDisplay 备用屏；用户之前已有的虚拟屏不会被删除。
+
 显式入口仍然可用于排障：
 
 ```sh

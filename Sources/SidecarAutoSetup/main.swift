@@ -845,6 +845,7 @@ final class SetupModel: ObservableObject {
         let mac = ProcessInfo.processInfo.operatingSystemVersion
         let macOK = mac.majorVersion >= 13
         let transport = usbTransportStatus()
+        let session = sidecarSessionStatus(config: config)
         let physicalDisplay = physicalDisplayPresent()
         let wifi = wifiStatus()
         let bluetooth = bluetoothStatus()
@@ -870,6 +871,8 @@ final class SetupModel: ObservableObject {
                       ? "已找到配置，目标名称：\(config.iPadName)"
                       : "还没有配置文件，保存下面的配置即可创建",
                       state: configExists ? .good : .action, action: .refresh, actionTitle: "重新检查"),
+            CheckItem(id: "session", title: "当前随航会话", detail: session.detail,
+                      state: session.state, action: .refresh, actionTitle: "重新检查", required: false),
             CheckItem(id: "transport", title: "当前连接方式", detail: transport.detail,
                       state: transport.ok ? .good : .action,
                       action: .refresh, actionTitle: "重新检查"),
@@ -978,6 +981,29 @@ final class SetupModel: ObservableObject {
             return (true, false, "未检测到 iPad 数据线；连接一次时将准备无线 Sidecar。")
         }
         return (false, false, "暂时无法确认 iPad 数据线状态；连接前会再次检查。")
+    }
+
+    private nonisolated static func sidecarSessionStatus(config: SetupConfig) ->
+        (state: CheckState, detail: String) {
+        let path = "\(NSHomeDirectory())/.local/bin/sidecarctl"
+        guard commandExists(path) else {
+            return (.optional, "尚未安装 sidecarctl；安装工具后可读取当前随航会话。")
+        }
+        let output = command(path, ["status", config.iPadName], timeout: 8)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let reportsConnected = output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .contains { line in
+                line == "connected" || line == "state=connected" ||
+                line.contains(" state=connected")
+            }
+        if reportsConnected {
+            return (.good, "目标 iPad 当前报告为已连接；状态检查不会重复发起连接。")
+        }
+        if output.isEmpty {
+            return (.unknown, "暂时无法读取目标 iPad 的随航会话；连接前会再次确认。")
+        }
+        return (.optional, "目标 iPad 当前没有已确认的随航会话；点击连接一次后才会发起请求。")
     }
 
     private nonisolated static func physicalDisplayPresent() -> Bool {
@@ -1676,7 +1702,7 @@ private struct SetupView: View {
                             Text("检测到的 USB iPad").font(.caption.weight(.semibold))
                             Picker("选择目标 iPad", selection: $model.config.usbSerial) {
                                 Text("请选择…").tag("")
-                                ForEach(model.usbCandidates) { candidate in
+                                ForEach(model.usbCandidates.filter { !$0.serial.isEmpty }) { candidate in
                                     Text(candidate.serial.isEmpty
                                          ? candidate.name
                                          : "\(candidate.name) · \(candidate.serial)")
@@ -1686,6 +1712,10 @@ private struct SetupView: View {
                             .pickerStyle(.menu)
                             Text("USB 产品名只是硬件描述；Sidecar 名称仍以 macOS 显示为准。")
                                 .font(.caption2).foregroundStyle(.secondary)
+                            if model.usbCandidates.allSatisfy({ $0.serial.isEmpty }) {
+                                Text("这些 USB 设备没有可用序列号；请只连接目标 iPad，或使用无线连接。")
+                                    .font(.caption2).foregroundStyle(.orange)
+                            }
                         }
                     }
                 }
@@ -1895,7 +1925,7 @@ private struct SetupWizardView: View {
                 if !model.usbCandidates.isEmpty {
                     Picker("选择 USB iPad", selection: $model.config.usbSerial) {
                         Text("请选择…").tag("")
-                        ForEach(model.usbCandidates) { candidate in
+                        ForEach(model.usbCandidates.filter { !$0.serial.isEmpty }) { candidate in
                             Text(candidate.serial.isEmpty
                                  ? candidate.name
                                  : "\(candidate.name) · \(candidate.serial)")
@@ -1903,6 +1933,10 @@ private struct SetupWizardView: View {
                         }
                     }
                     .pickerStyle(.menu)
+                    if model.usbCandidates.allSatisfy({ $0.serial.isEmpty }) {
+                        Text("USB 设备没有可用序列号，请只连接目标 iPad。")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                 }
                 Button("保存当前连接设置") { model.saveConfig() }
                     .buttonStyle(.borderedProminent)

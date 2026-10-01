@@ -12,6 +12,11 @@
   iPads, so users can select a serial number in the app instead of copying it
   from the IORegistry.
 
+- Added deterministic controller integration tests for transport selection,
+  wireless preflight, ambiguous USB refusal, and action-lock cleanup. Failed or
+  cancelled headless connections now reclaim virtual fallback displays created
+  by that operation while preserving user-owned displays.
+
 - Added a first-run configuration wizard, USB iPad scanning with automatic target
   field filling, separate Mac/iPad readiness messaging, and live connection-stage
   feedback in the manual test view.

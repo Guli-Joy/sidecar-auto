@@ -26,6 +26,10 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/test_usb_detector.sh
+      - name: Run safe connection controller tests
+        run: |
+          set -euo pipefail
+          bash tests/test_connect_controller.sh
       - name: Build bundled helpers and CLI
         run: ./installer/install-sidecar-auto.sh --build-only
       - name: Build setup app bundle

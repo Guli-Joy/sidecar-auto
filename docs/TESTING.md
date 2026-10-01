@@ -11,6 +11,9 @@ CI 只做不会占用用户设备的检查：
 - plist 和发布目录检查。
 - USB iPad 检测器的唯一设备、无设备、多设备和序列号筛选测试；测试使用伪造
   的 IORegistry 输出，不会接触真实 iPad。
+- 一次性连接控制器的安全集成测试；使用伪造的 Sidecar、显示拓扑、USB 和无线
+  辅助程序，覆盖有线选择、无线前置、多个 iPad 拒绝误连以及锁目录清理，不会
+  发起真实连接。
 
 CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷指令。
 
@@ -19,6 +22,7 @@ CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷
 ```sh
 bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
 bash ./tests/test_usb_detector.sh
+bash ./tests/test_connect_controller.sh
 ./installer/install-sidecar-auto.sh --build-only
 ./packaging/build-sidecar-auto-app.sh --host-only --output "$(mktemp -d)"
 ```

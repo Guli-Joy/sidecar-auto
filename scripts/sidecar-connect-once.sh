@@ -113,6 +113,10 @@ esac
 : "${SIDECAR_AUTO_TEST_MODE:=0}"
 PROGRESS_SPEECH_PID=""
 ACTIVE_VIRTUAL_DISPLAY_BACKEND=""
+BUILTIN_FALLBACK_STARTED_BY_OPERATION=0
+BETTERDISPLAY_FALLBACK_CHANGED_BY_OPERATION=0
+PRESERVE_FALLBACK_ON_EXIT=0
+EXIT_CLEANUP_RUNNING=0
 INITIAL_USB_FILE=""
 INITIAL_USB_CODE=""
 LOCK_DIR="$HOME/Library/Caches/sidecar-auto/explicit-action.lock"
@@ -168,6 +172,48 @@ feedback_progress() {
         ( /usr/bin/say -v "$VOICE" "$2" >/dev/null 2>&1 || /usr/bin/say "$2" >/dev/null 2>&1 || true ) &
         PROGRESS_SPEECH_PID=$!
     fi
+}
+cleanup_owned_fallback() {
+    # Only reclaim resources this invocation created or enabled. A user-owned
+    # virtual display must survive a failed connection and an interrupted
+    # operation. BetterDisplay is never quit here because it may contain other
+    # displays or be used by the user for unrelated work.
+    [ "$PRESERVE_FALLBACK_ON_EXIT" = "1" ] && return 0
+    if [ "$BUILTIN_FALLBACK_STARTED_BY_OPERATION" = "1" ] && [ -x "$VIRTUAL_DISPLAY_HELPER" ]; then
+        local builtin_output builtin_code
+        builtin_output="$(run_builtin_virtual destroy 2>&1)"
+        builtin_code=$?
+        if [ "$builtin_code" -eq 0 ]; then
+            log "cleaned up built-in virtual display created by this operation"
+        else
+            log "could not clean up built-in virtual display after interrupted/failed operation (exit=$builtin_code): $builtin_output"
+        fi
+    fi
+    if [ "$BETTERDISPLAY_FALLBACK_CHANGED_BY_OPERATION" = "1" ] && [ -n "${BETTERDISPLAY_CLI_RESOLVED:-}" ]; then
+        local better_output better_code
+        better_output="$(run_betterdisplay set "-name=$VIRTUAL_DISPLAY_NAME" -type=VirtualScreen -connected=off 2>&1)"
+        better_code=$?
+        if [ "$better_code" -eq 0 ]; then
+            log "cleaned up BetterDisplay virtual fallback changed by this operation"
+        else
+            log "could not clean up BetterDisplay fallback after interrupted/failed operation (exit=$better_code): $better_output"
+        fi
+    fi
+}
+handle_interrupt() {
+    log "connection operation interrupted by signal; beginning owned fallback cleanup"
+    exit 130
+}
+cleanup_on_exit() {
+    local exit_code=$?
+    if [ "$EXIT_CLEANUP_RUNNING" = "1" ]; then
+        exit "$exit_code"
+    fi
+    EXIT_CLEANUP_RUNNING=1
+    if [ "$exit_code" -ne 0 ]; then cleanup_owned_fallback; fi
+    rm -rf "$LOCK_DIR" 2>/dev/null || true
+    trap - EXIT
+    exit "$exit_code"
 }
 run_with_timeout() {
     # macOS does not ship GNU timeout. Perl is present on supported macOS
@@ -478,13 +524,19 @@ builtin_virtual_display_id() {
     printf '%s\n' "$state" | /usr/bin/sed -n 's/.*display_id=\([0-9][0-9]*\).*/\1/p' | /usr/bin/tail -n 1
 }
 prepare_builtin_virtual() {
-    local output code deadline
+    local output code deadline was_online=0
+    if builtin_virtual_online; then was_online=1; fi
     output="$(run_builtin_virtual ensure --background 2>&1)"; code=$?
     if [ "$code" -ne 0 ]; then
         log "built-in virtual display failed to start (exit=$code): $output"
         feedback "$SOUND_FAILURE" "项目内置虚拟屏启动失败"
         notify_detail "$NOTIFY_TITLE" "项目内置虚拟屏启动失败，未连接随航。详情：$output"
         return 20
+    fi
+    # Capture ownership from the preflight state. If it was already online
+    # before this operation, leave it alone on cancellation or failure.
+    if [ "$was_online" -eq 0 ]; then
+        BUILTIN_FALLBACK_STARTED_BY_OPERATION=1
     fi
     deadline=$((SECONDS + HEADLESS_DISPLAY_WAIT_SECONDS))
     while (( SECONDS <= deadline )); do
@@ -860,6 +912,7 @@ prepare_headless_fallback() {
         fi
     fi
     if ! printf '%s\n' "$virtual_state" | /usr/bin/grep -q '^exists=1 '; then
+        BETTERDISPLAY_FALLBACK_CHANGED_BY_OPERATION=1
         log "virtual display '$VIRTUAL_DISPLAY_NAME' is missing; creating it automatically"
         create_virtual_fallback
         code=$?
@@ -891,6 +944,7 @@ prepare_headless_fallback() {
         log "automatic virtual display creation verified: $VIRTUAL_DISPLAY_NAME ($virtual_state)"
     fi
     if ! printf '%s\n' "$virtual_state" | /usr/bin/grep -q '^exists=1 connected=1$'; then
+        BETTERDISPLAY_FALLBACK_CHANGED_BY_OPERATION=1
         output="$(run_betterdisplay set "-name=$VIRTUAL_DISPLAY_NAME" -type=VirtualScreen -connected=on 2>&1)"
         code=$?
         if [ "$code" -ne 0 ]; then
@@ -1317,7 +1371,8 @@ if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     fi
 fi
 printf '%s\n' "$$" > "$LOCK_DIR/pid"
-trap 'rm -rf "$LOCK_DIR" 2>/dev/null || true' EXIT
+trap 'cleanup_on_exit' EXIT
+trap 'handle_interrupt' INT TERM HUP
 if [ "$CONNECTION_MODE" = "auto" ]; then
     feedback_progress "$SOUND_START" "正在检查 iPad 数据线，准备连接随航"
 else
@@ -1413,7 +1468,7 @@ if [ "$snapshot_parse_code" -ne 0 ]; then
 fi
 read -r target_state target_matches device_rows connected_rows disconnected_rows unknown_rows <<< "$snapshot_summary"
 case "$target_state" in
-    connected) status_code=0 ;;
+    connected) status_code=0; PRESERVE_FALLBACK_ON_EXIT=1 ;;
     disconnected|not_found) status_code=1 ;;
     unknown)
         log "explicit connect refused: target Sidecar state is unknown: $snapshot_output"
