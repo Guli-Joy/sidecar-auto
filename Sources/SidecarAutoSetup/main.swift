@@ -868,8 +868,9 @@ final class SetupModel: ObservableObject {
             return false
         }
         let preferences = command("/usr/bin/defaults", ["read", "pbs", "NSServicesStatus"], timeout: 2)
-        guard preferences.contains(workflowID) else { return false }
-        return preferences.contains("\"key_equivalent\" = \"\(equivalent)\";")
+        guard let idRange = preferences.range(of: workflowID) else { return false }
+        let entry = String(preferences[idRange.upperBound...].split(separator: "}", maxSplits: 1).first ?? "")
+        return entry.contains("\"key_equivalent\" = \"\(equivalent)\";")
     }
 
     private nonisolated static func fileVaultStatus() ->
