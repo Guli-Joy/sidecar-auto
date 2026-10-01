@@ -1,6 +1,6 @@
 # Sidecar Auto 设置助手
 
-Sidecar Auto 设置助手是给普通 Mac 用户使用的图形界面。发布版 App 已经带有
+Sidecar Auto 设置助手是给普通 Mac 用户使用的图形界面。它的主要用途是让没有随身显示器的 Mac mini 使用 iPad 作为主屏；在家接有实体显示器时，也可以把 iPad 作为普通扩展屏。发布版 App 已经带有
 Sidecar Auto 的运行时文件，不需要安装 Swift、clang 或 Xcode Command Line
 Tools，也不需要在终端输入命令。
 

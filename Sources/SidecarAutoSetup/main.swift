@@ -1285,8 +1285,12 @@ private struct SetupView: View {
                 Button { section = .checks } label: { Label("查看环境检查", systemImage: "checkmark.shield") }
                     .buttonStyle(.bordered)
                 if model.checks.first(where: { $0.id == "shortcuts" && $0.state != .good }) != nil {
-                    Button { model.perform(.installShortcuts) } label: {
-                        Label("一键配置快捷指令", systemImage: "keyboard.badge.ellipsis")
+                    let shortcutNeedsConsent = model.checks.first {
+                        $0.id == "shortcuts" && $0.detail.contains("首次运行")
+                    } != nil
+                    Button { model.perform(shortcutNeedsConsent ? .shortcuts : .installShortcuts) } label: {
+                        Label(shortcutNeedsConsent ? "完成快捷指令授权" : "一键配置快捷指令",
+                              systemImage: shortcutNeedsConsent ? "checkmark.shield" : "keyboard.badge.ellipsis")
                     }
                     .buttonStyle(.bordered)
                     .disabled(model.isInstalling || model.isOperating)
