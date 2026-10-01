@@ -118,6 +118,12 @@ struct SetupConfig: Sendable {
     var virtualDisplayBackend: VirtualDisplayBackend = .auto
 }
 
+struct USBIPadCandidate: Identifiable, Hashable, Sendable {
+    let name: String
+    let serial: String
+    var id: String { "\(name)\u{0000}\(serial)" }
+}
+
 @MainActor
 final class SetupModel: ObservableObject {
     @Published var checks: [CheckItem] = []
@@ -133,6 +139,7 @@ final class SetupModel: ObservableObject {
     @Published var isRequestingPermission = false
     @Published var isScanningIPad = false
     @Published var scanMessage = ""
+    @Published var usbCandidates: [USBIPadCandidate] = []
     @Published var betterDisplayReport = "尚未执行 BetterDisplay 只读检查。"
     @Published var isInspectingBetterDisplay = false
 
@@ -231,6 +238,7 @@ final class SetupModel: ObservableObject {
         }
         isScanningIPad = true
         scanMessage = "正在扫描已连接的 iPad 数据设备……"
+        usbCandidates = []
         let worker = Task.detached(priority: .userInitiated) {
             Self.execute(executable: detector, arguments: [])
         }
@@ -238,8 +246,14 @@ final class SetupModel: ObservableObject {
             let result = await worker.value
             guard let self else { return }
             self.isScanningIPad = false
-            let line = result.output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-                .map(String.init).first(where: { $0.hasPrefix("USB_IPAD_MATCHED\t") })
+            let outputLines = result.output.split(whereSeparator: { $0 == "\n" || $0 == "\r" }).map(String.init)
+            self.usbCandidates = outputLines.compactMap { line in
+                guard line.hasPrefix("USB_IPAD_CANDIDATE\t") else { return nil }
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+                guard fields.count >= 3 else { return nil }
+                return USBIPadCandidate(name: fields[1], serial: fields[2])
+            }
+            let line = outputLines.first(where: { $0.hasPrefix("USB_IPAD_MATCHED\t") })
             if result.status == 0, let line {
                 let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
                 let name = fields.dropFirst().first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -264,7 +278,9 @@ final class SetupModel: ObservableObject {
                     ? "已识别 USB 设备“\(name)”；\(targetHint)，然后点击“保存设置”。"
                     : "已识别 USB 设备“\(name)”并填入序列号；\(targetHint)，然后点击“保存设置”。"
             } else if result.output.contains("USB_IPAD_AMBIGUOUS") {
-                self.scanMessage = "检测到多台 iPad，请只保留目标 iPad，或手动填写 USB 序列号。"
+                self.scanMessage = self.usbCandidates.isEmpty
+                    ? "检测到多台 iPad，请填写 USB 序列号后再保存。"
+                    : "检测到 (self.usbCandidates.count) 台 iPad，请在下方选择目标设备。"
             } else if result.output.contains("USB_IPAD_NOT_FOUND") {
                 self.scanMessage = "没有检测到 iPad 数据线；可以直接配置名称并使用无线连接。"
             } else {
@@ -1655,6 +1671,23 @@ private struct SetupView: View {
                             .font(.caption).foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    if !model.usbCandidates.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("检测到的 USB iPad").font(.caption.weight(.semibold))
+                            Picker("选择目标 iPad", selection: $model.config.usbSerial) {
+                                Text("请选择…").tag("")
+                                ForEach(model.usbCandidates) { candidate in
+                                    Text(candidate.serial.isEmpty
+                                         ? candidate.name
+                                         : "\(candidate.name) · \(candidate.serial)")
+                                        .tag(candidate.serial)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            Text("USB 产品名只是硬件描述；Sidecar 名称仍以 macOS 显示为准。")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             Panel {
@@ -1858,6 +1891,18 @@ private struct SetupWizardView: View {
                     .textFieldStyle(.roundedBorder)
                 if !model.scanMessage.isEmpty {
                     Text(model.scanMessage).font(.caption).foregroundStyle(.secondary)
+                }
+                if !model.usbCandidates.isEmpty {
+                    Picker("选择 USB iPad", selection: $model.config.usbSerial) {
+                        Text("请选择…").tag("")
+                        ForEach(model.usbCandidates) { candidate in
+                            Text(candidate.serial.isEmpty
+                                 ? candidate.name
+                                 : "\(candidate.name) · \(candidate.serial)")
+                                .tag(candidate.serial)
+                        }
+                    }
+                    .pickerStyle(.menu)
                 }
                 Button("保存当前连接设置") { model.saveConfig() }
                     .buttonStyle(.borderedProminent)

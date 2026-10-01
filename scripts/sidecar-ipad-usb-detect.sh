@@ -108,6 +108,15 @@ if [ "$awk_status" -ne 0 ]; then
 fi
 
 match_count="$(printf '%s\n' "$match_output" | awk 'NF { n++ } END { print n+0 }')"
+if [ "$match_count" -gt 0 ]; then
+    # Keep the summary exit codes stable while exposing every candidate to the
+    # setup app. Product names are USB descriptors, not Sidecar friendly names;
+    # the serial is the safe selector when multiple iPads are attached.
+    while IFS=$'\t' read -r candidate_name candidate_serial; do
+        [ -n "$candidate_name$candidate_serial" ] || continue
+        printf 'USB_IPAD_CANDIDATE\t%s\t%s\n' "$candidate_name" "$candidate_serial"
+    done <<< "$match_output"
+fi
 if [ "$match_count" -eq 1 ]; then
     printf 'USB_IPAD_MATCHED\t%s\n' "$match_output"
     exit 0

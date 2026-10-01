@@ -8,6 +8,10 @@
   the UI no longer reports a cancelled operation as a success. Added a repeatable
   signed release script for notarized DMG production.
 
+- Added a visual USB iPad candidate picker for setups with multiple connected
+  iPads, so users can select a serial number in the app instead of copying it
+  from the IORegistry.
+
 - Added a first-run configuration wizard, USB iPad scanning with automatic target
   field filling, separate Mac/iPad readiness messaging, and live connection-stage
   feedback in the manual test view.
