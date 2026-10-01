@@ -10,6 +10,38 @@ set -u
 CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
 [ -r "$CONFIG" ] && . "$CONFIG"
 
+# Shortcuts asks for a one-time “Run Shell Script” confirmation before this
+# process starts.  The generated shortcut sets this flag so the setup helper
+# can show a truthful, per-shortcut authorization state without claiming that
+# macOS permissions were granted silently.
+SLUG="connect-sidecar"
+mark_shortcut_invocation() {
+    # New templates set an explicit marker.  Keep a bounded parent-process
+    # fallback so shortcuts imported before this release can still record the
+    # first-run consent after they are launched from Shortcuts.app.
+    local launched_by_shortcuts=0 parent="" grandparent=""
+    if [ "${SIDECAR_SHORTCUT_INVOCATION:-0}" = "1" ]; then
+        launched_by_shortcuts=1
+    elif [ -n "${PPID:-}" ]; then
+        parent="$(/bin/ps -o command= -p "$PPID" 2>/dev/null || true)"
+        grandparent="$(/bin/ps -o command= -p "$(/bin/ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')" 2>/dev/null || true)"
+        case "$parent $grandparent" in
+            *Shortcuts*|*shortcuts*) launched_by_shortcuts=1 ;;
+        esac
+    fi
+    [ "$launched_by_shortcuts" = "1" ] || return 0
+    local state_dir="$HOME/Library/Application Support/Sidecar Auto/Shortcuts"
+    local marker="$state_dir/${SLUG}.shell-status"
+    mkdir -p "$state_dir" 2>/dev/null || return 0
+    {
+        printf 'authorized=1\n'
+        printf 'timestamp=%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
+    } >"$marker.tmp.$$" 2>/dev/null || return 0
+    chmod 600 "$marker.tmp.$$" 2>/dev/null || true
+    mv -f "$marker.tmp.$$" "$marker" 2>/dev/null || rm -f "$marker.tmp.$$"
+}
+mark_shortcut_invocation
+
 CONNECTION_MODE="${1:-auto}"
 case "$CONNECTION_MODE" in
     auto)

@@ -643,8 +643,15 @@ final class SetupModel: ObservableObject {
                       actionTitle: builtinVirtual.ok ? "重新检查" : "安装 / 修复"),
             CheckItem(id: "shortcuts", title: "macOS 快捷指令", detail: shortcuts.detail,
                       state: shortcuts.ok ? .good : .action,
-                      action: shortcuts.ok ? .shortcuts : .installShortcuts,
-                      actionTitle: shortcuts.ok ? "打开快捷指令" : "一键配置快捷指令"),
+                      // Imported shortcuts still need Apple's one-time
+                      // “Allow … to run Shell Script” consent. Opening
+                      // Shortcuts lets the user run each action while a
+                      // display is attached; the app never runs a real
+                      // connection merely to probe that permission.
+                      action: shortcuts.detail.contains("首次运行") ? .shortcuts
+                        : shortcuts.ok ? .shortcuts : .installShortcuts,
+                      actionTitle: shortcuts.detail.contains("首次运行") ? "打开并完成首次允许"
+                        : shortcuts.ok ? "打开快捷指令" : "一键配置快捷指令"),
             CheckItem(id: "filevault", title: "文件保险箱（FileVault）", detail: fileVault.detail,
                       state: fileVault.state, action: .fileVault, actionTitle: "查看文件保险箱",
                       required: false),
@@ -841,6 +848,11 @@ final class SetupModel: ObservableObject {
             let connectKey = shortcutKeyConfigured(slug: "connect-sidecar", equivalent: "@~^s")
             let disconnectKey = shortcutKeyConfigured(slug: "disconnect-sidecar", equivalent: "@~^d")
             if connectKey && disconnectKey {
+                let connectPermission = shortcutShellPermissionGranted(slug: "connect-sidecar")
+                let disconnectPermission = shortcutShellPermissionGranted(slug: "disconnect-sidecar")
+                if !connectPermission || !disconnectPermission {
+                    return (false, "快捷键已设置，但首次运行仍需允许“运行 Shell 脚本”；请在有屏幕时在快捷指令中各运行一次并点击“允许”，再返回重新检查")
+                }
                 return (true, "已找到连接和断开快捷指令；⌃⌥⌘S / ⌃⌥⌘D 已设置")
             }
             // Keep this check actionable.  A shortcut can already be present
@@ -880,6 +892,17 @@ final class SetupModel: ObservableObject {
         guard let idRange = preferences.range(of: String(workflowID)) else { return false }
         let entry = String(preferences[idRange.upperBound...].split(separator: "}", maxSplits: 1).first ?? "")
         return entry.contains("\"key_equivalent\" = \"\(equivalent)\";")
+    }
+
+    /// Shortcuts presents a separate first-run consent for each Run Shell
+    /// Script action. The generated action sets SIDECAR_SHORTCUT_INVOCATION,
+    /// and the runtime records a marker only after macOS allowed the process
+    /// to start. This is deliberately a local hint: macOS has no public API
+    /// for querying the consent itself, and the app never attempts to bypass it.
+    private nonisolated static func shortcutShellPermissionGranted(slug: String) -> Bool {
+        let url = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/Sidecar Auto/Shortcuts/\(slug).shell-status")
+        guard let status = try? String(contentsOf: url, encoding: .utf8) else { return false }
+        return status.split(separator: "\n").contains(where: { $0 == "authorized=1" })
     }
 
     private nonisolated static func fileVaultStatus() ->

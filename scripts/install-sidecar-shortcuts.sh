@@ -253,8 +253,11 @@ install_one() {
     return 1
 }
 
-connect_command='exec "$HOME/.local/bin/sidecar-connect-once.sh" auto'
-disconnect_command='exec "$HOME/.local/bin/sidecar-disconnect-once.sh"'
+# Mark invocations launched by these generated Shortcuts.  The runtime uses this
+# marker to distinguish the first-run Shell Script consent from a manual test
+# started in Terminal or the setup app.
+connect_command='export SIDECAR_SHORTCUT_INVOCATION=1; exec "$HOME/.local/bin/sidecar-connect-once.sh" auto'
+disconnect_command='export SIDECAR_SHORTCUT_INVOCATION=1; exec "$HOME/.local/bin/sidecar-disconnect-once.sh"'
 CONNECT_WORKFLOW_ID=""
 DISCONNECT_WORKFLOW_ID=""
 

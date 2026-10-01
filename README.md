@@ -154,6 +154,8 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 
 “连接 Sidecar”是日常入口，会根据 USB 数据设备自动选择有线或无线。“连接无线”始终请求 `ForceAWDL`，用于验证无线路径。快捷指令运行在 Mac 上；iPad 上的快捷指令不能直接调用 Mac 的私有 Sidecar API。
 
+首次运行每个“运行 Shell 脚本”动作时，macOS 会分别询问是否允许“连接 Sidecar”或“断开 Sidecar”运行 Shell 脚本。该确认不能静默授予；请在有显示器时各运行一次并点击“允许”，再回到设置助手重新检查。设置助手不会为了探测权限自动执行真实连接。
+
 每次操作都会先播放开始提示音，再用 `say` 播报进度。成功使用 `Glass.aiff`，失败或拒绝使用 `Basso.aiff`。音效来自 Mac 当前音频输出；无显示器使用前请先测试音量。可在配置中设置 `SPEAK=0` 关闭语音，音效仍会保留。
 
 脚本在 `~/Library/Caches/sidecar-auto/explicit-action.lock` 中串行化同时按键，并把结果写入 `~/Library/Logs/sidecar-auto.log`。日志只保存在本机，可能包含 iPad 名称和系统错误。
