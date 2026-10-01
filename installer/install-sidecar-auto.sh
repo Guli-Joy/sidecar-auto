@@ -103,7 +103,8 @@ check_sources() {
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
         "$SCRIPT_ROOT/sidecar-login-ready.sh" \
-        "$SCRIPT_ROOT/sidecar-doctor.sh"; do
+        "$SCRIPT_ROOT/sidecar-doctor.sh" \
+        "$SCRIPT_ROOT/install-sidecar-shortcuts.sh"; do
         [ -r "$source" ] || fail "缺少安装源文件：$source"
     done
 }
@@ -214,7 +215,8 @@ build_outputs() {
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
         "$SCRIPT_ROOT/sidecar-login-ready.sh" \
-        "$SCRIPT_ROOT/sidecar-doctor.sh"; do
+        "$SCRIPT_ROOT/sidecar-doctor.sh" \
+        "$SCRIPT_ROOT/install-sidecar-shortcuts.sh"; do
         bash -n "$script" || fail "Shell 语法检查失败：$script"
     done
 }
@@ -287,7 +289,8 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
-        sidecar-doctor.sh; do
+        sidecar-doctor.sh \
+        install-sidecar-shortcuts.sh; do
         if [ -f "$STAGE/$name" ]; then
             cp "$STAGE/$name" "$INSTALL_STAGE/$name"
         else
@@ -309,7 +312,8 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
-        sidecar-doctor.sh; do
+        sidecar-doctor.sh \
+        install-sidecar-shortcuts.sh; do
         mv -f "$INSTALL_STAGE/$name" "$BIN_DIR/$name"
     done
 
@@ -349,7 +353,8 @@ printf '  %s\n' \
     "$BIN_DIR/sidecar-disconnect-once.sh" \
     "$BIN_DIR/sidecar-ipad-usb-detect.sh" \
     "$BIN_DIR/sidecar-login-ready.sh" \
-    "$BIN_DIR/sidecar-doctor.sh"
+    "$BIN_DIR/sidecar-doctor.sh" \
+    "$BIN_DIR/install-sidecar-shortcuts.sh"
 if [ -f "$CONFIG_FILE" ]; then
     printf '配置文件：%s（已有配置不会被覆盖）\n' "$CONFIG_FILE"
 fi

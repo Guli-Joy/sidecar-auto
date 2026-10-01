@@ -133,6 +133,7 @@ for required in \
     "$ROOT/scripts/sidecar-hotkey.sh" \
     "$ROOT/scripts/sidecar-ipad-usb-detect.sh" \
     "$ROOT/scripts/sidecar-login-ready.sh" \
+    "$ROOT/scripts/install-sidecar-shortcuts.sh" \
     "$ROOT/config/config.example" \
     "$ROOT/launchd/com.sidecarauto.login-ready.plist.template" \
     "$PACKAGING_ROOT/AppIcon.icns" \
@@ -223,7 +224,8 @@ for script in \
     sidecar-doctor.sh \
     sidecar-hotkey.sh \
     sidecar-ipad-usb-detect.sh \
-    sidecar-login-ready.sh; do
+    sidecar-login-ready.sh \
+    install-sidecar-shortcuts.sh; do
     bash -n "$ROOT/scripts/$script" || fail "Shell 语法检查失败：$script"
     cp "$ROOT/scripts/$script" "$STAGE/app/Contents/Resources/scripts/$script"
     chmod 0755 "$STAGE/app/Contents/Resources/scripts/$script"

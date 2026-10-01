@@ -38,7 +38,7 @@ printf '%s\n' 'IPAD_USB_SERIAL_NUMBER="在此填写序列号"' >> "$HOME/.config
 
 ### 无线入口没有反应
 
-两台设备都要唤醒、解锁、登录同一 Apple Account，并开启 Wi-Fi、蓝牙和 Handoff。Mac 路径是“系统设置 → 通用 → 隔空投送与接力 → 接力”，iPad 路径是“设置 → 通用 → 隔空播放与接力 → 接力”。`ForceAWDL` 不要求加入同一个路由器，但 Mac 的 Wi-Fi 必须保持开启。第一次使用时把显示器接回，允许 macOS 的 Bluetooth/TCC 提示；iPad 侧的开关不能由 Mac 远程修改。
+两台设备都要唤醒、解锁、登录同一 Apple Account，并开启 Wi-Fi、蓝牙和 Handoff。Mac 路径是“系统设置 → 通用 → 隔空投送与连续互通”（旧版 macOS 叫“隔空投送与接力”），并开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”，iPad 路径是“设置 → 通用 → 隔空播放与接力 → 接力”。`ForceAWDL` 不要求加入同一个路由器，但 Mac 的 Wi-Fi 必须保持开启。第一次使用时把显示器接回，允许 macOS 的 Bluetooth/TCC 提示；iPad 侧的开关不能由 Mac 远程修改。
 
 ### 无显示器时虚拟屏失败
 

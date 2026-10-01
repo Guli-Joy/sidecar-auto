@@ -37,7 +37,7 @@ enum CheckState: Sendable {
 
 enum CheckAction: Sendable {
     case install, refresh, bluetooth, handoff
-    case betterDisplay, shortcuts
+    case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions
 }
 
 /// Keeps a CoreBluetooth manager alive long enough for macOS to show the
@@ -171,7 +171,7 @@ final class SetupModel: ObservableObject {
         case .bluetooth:
             requestBluetoothAccess()
         case .handoff:
-            openSettings("x-apple.systempreferences:com.apple.preference.general?Handoff")
+            openHandoffSettings()
         case .betterDisplay:
             if let app = betterDisplayURL() {
                 NSWorkspace.shared.open(app)
@@ -185,6 +185,14 @@ final class SetupModel: ObservableObject {
             } else {
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Shortcuts.app"))
             }
+        case .installShortcuts:
+            installShortcuts()
+        case .fileVault:
+            openSettings("x-apple.systempreferences:com.apple.preference.security?FileVault")
+            message = "文件保险箱设置用于查看启动保护；使用 Sidecar 不要求关闭它。"
+        case .loginOptions:
+            openSettings("x-apple.systempreferences:com.apple.Users-Groups-Settings.extension")
+            message = "已打开“用户与群组”。请查看“自动登录为”；文件保险箱开启时 macOS 会禁用此选项。"
         }
     }
 
@@ -324,6 +332,41 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    /// Generate and import the two user-facing Shortcuts. macOS requires the
+    /// user to confirm each imported shortcut; the helper opens the first
+    /// review sheet and waits for that confirmation before opening the second.
+    private func installShortcuts() {
+        guard !isInstalling && !isOperating else { return }
+        let installed = "\(NSHomeDirectory())/.local/bin/install-sidecar-shortcuts.sh"
+        guard let resources = Bundle.main.resourceURL, Self.hasBundledRuntime(resources: resources) else {
+            message = "此 App 缺少安装资源，请重新下载完整版本。"
+            return
+        }
+        isInstalling = true
+        installerLog = "正在准备“连接 Sidecar”和“断开 Sidecar”快捷指令……\n"
+        message = "正在打开快捷指令导入确认；请按提示点击“添加快捷指令”。"
+        let worker = Task.detached(priority: .userInitiated) {
+            // A new user should not have to install tools in a separate step.
+            // The runtime installer preserves any existing connection config.
+            let install = Self.installBundledRuntime(resources: resources)
+            guard install.status == 0 else {
+                return ProcessResult(status: install.status, output: install.output)
+            }
+            let imported = Self.execute(executable: installed, arguments: [])
+            return ProcessResult(status: imported.status, output: install.output + imported.output)
+        }
+        Task { @MainActor [weak self] in
+            let result = await worker.value
+            guard let self else { return }
+            self.installerLog += result.output
+            self.isInstalling = false
+            self.message = result.status == 0
+                ? "快捷指令导入流程已完成；可在快捷指令详情中设置键盘快捷键。"
+                : "快捷指令导入失败（退出码 \(result.status)）；请查看日志。"
+            self.refresh()
+        }
+    }
+
     private func installRuntime() {
         guard !isInstalling else { return }
         guard let resources = Bundle.main.resourceURL else {
@@ -357,6 +400,25 @@ final class SetupModel: ObservableObject {
         guard let url = URL(string: value) else { return }
         NSWorkspace.shared.open(url)
         message = "已打开系统设置。完成授权后返回此窗口并点击“重新检查”。"
+    }
+
+    /// Open the dedicated Handoff pane used by current macOS releases.  The
+    /// old `com.apple.preference.general?Handoff` URL opens the General page
+    /// but does not select the Continuity toggle on macOS 13 and later, which
+    /// made the previous button look as if it had done nothing.  Keep the old
+    /// URL as a compatibility fallback for older System Settings builds.
+    private func openHandoffSettings() {
+        let current = URL(string: "x-apple.systempreferences:com.apple.AirDrop-Handoff-Settings.extension")!
+        if NSWorkspace.shared.open(current) {
+            message = "已打开“隔空投送与连续互通”。请开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”，完成后返回本窗口。"
+            return
+        }
+        if let legacy = URL(string: "x-apple.systempreferences:com.apple.preference.general?Handoff"),
+           NSWorkspace.shared.open(legacy) {
+            message = "已打开系统设置。请在“通用”中找到“隔空投送与接力/连续互通”，开启“接力”后返回本窗口。"
+        } else {
+            message = "无法自动打开接力设置。请手动进入：系统设置 → 通用 → 隔空投送与连续互通（旧版叫“隔空投送与接力”）。"
+        }
     }
 
     private func betterDisplayURL() -> URL? {
@@ -467,6 +529,7 @@ final class SetupModel: ObservableObject {
             atPath: "\(NSHomeDirectory())/.config/sidecar-auto/config")
         let shortcuts = shortcutsStatus()
         let fileVault = fileVaultStatus()
+        let autoLogin = autoLoginStatus(fileVaultEnabled: fileVault.enabled)
 
         return [
             CheckItem(id: "mac", title: "macOS 版本", detail: macOK
@@ -484,8 +547,14 @@ final class SetupModel: ObservableObject {
                       state: wifi.ok ? .good : .warning, action: .refresh, actionTitle: "重新检查"),
             CheckItem(id: "bluetooth", title: "蓝牙", detail: bluetooth.detail,
                       state: bluetooth.ok ? .good : .action, action: .bluetooth, actionTitle: "申请 / 开启"),
-            CheckItem(id: "handoff", title: "接力（Handoff）", detail: handoff.detail,
-                      state: .unknown, action: .handoff, actionTitle: "打开 Mac 接力设置"),
+            CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
+                      // The Mac preference values are only a hint; macOS does
+                      // not expose a supported runtime probe and the iPad side
+                      // is never observable from this app. Keep a confirmed
+                      // Mac preference in the neutral state rather than
+                      // claiming that wireless Sidecar is ready.
+                      state: handoff.ok ? .unknown : .warning,
+                      action: .handoff, actionTitle: "打开 Mac 接力设置"),
             CheckItem(id: "accessibility", title: "辅助功能权限", detail:
                       "当前连接路径不需要辅助功能权限；只有启用需要 UI 自动化的可选功能时才需要手动授权。",
                       state: .good, action: nil, actionTitle: nil),
@@ -499,9 +568,13 @@ final class SetupModel: ObservableObject {
                       action: builtinVirtual.ok ? .refresh : .install,
                       actionTitle: builtinVirtual.ok ? "重新检查" : "安装 / 修复"),
             CheckItem(id: "shortcuts", title: "macOS 快捷指令", detail: shortcuts.detail,
-                      state: .action, action: .shortcuts, actionTitle: "打开快捷指令"),
-            CheckItem(id: "filevault", title: "FileVault / 登录状态", detail: fileVault,
-                      state: .unknown, action: nil, actionTitle: nil)
+                      state: shortcuts.ok ? .good : .action,
+                      action: shortcuts.ok ? .shortcuts : .installShortcuts,
+                      actionTitle: shortcuts.ok ? "打开快捷指令" : "一键配置快捷指令"),
+            CheckItem(id: "filevault", title: "文件保险箱（FileVault）", detail: fileVault.detail,
+                      state: fileVault.state, action: .fileVault, actionTitle: "查看文件保险箱"),
+            CheckItem(id: "autologin", title: "macOS 自动登录", detail: autoLogin.detail,
+                      state: autoLogin.state, action: .loginOptions, actionTitle: "查看自动登录选项")
         ]
     }
 
@@ -548,7 +621,8 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
-            "sidecar-doctor.sh"
+            "sidecar-doctor.sh",
+            "install-sidecar-shortcuts.sh"
         ]
         let missing = names.filter { !commandExists("\(bin)/\($0)") }
         if missing.isEmpty { return (true, "核心工具已安装到 ~/.local/bin") }
@@ -611,8 +685,22 @@ final class SetupModel: ObservableObject {
     }
 
     private nonisolated static func handoffStatus() -> (ok: Bool, detail: String) {
-        _ = command("/usr/bin/defaults", ["read", "NSGlobalDomain", "NSUserActivity", "-g"])
-        return (false, "请确认两端都已开启接力。Mac：系统设置 → 通用 → 隔空投送与接力；iPad：设置 → 通用 → 隔空播放与接力 → 接力。App 无法远程读取或修改 iPad 端开关")
+        // These keys are private implementation details and are therefore
+        // only a local hint. They do not prove the Continuity daemon is ready
+        // and they say nothing about the iPad's setting.
+        let advertising = command("/usr/bin/defaults",
+                                  ["read", "com.apple.coreservices.useractivityd", "ActivityAdvertisingAllowed"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let receiving = command("/usr/bin/defaults",
+                                ["read", "com.apple.coreservices.useractivityd", "ActivityReceivingAllowed"])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let macHint = [advertising, receiving].allSatisfy {
+            ["1", "true", "yes", "on"].contains($0.lowercased())
+        }
+        let macText = macHint
+            ? "Mac 侧接力偏好已开启（运行时仍需 macOS 自己确认）"
+            : "Mac 侧接力偏好未同时开启或无法读取"
+        return (macHint, "\(macText)。请确认两端都已开启接力。Mac：系统设置 → 通用 → 隔空投送与连续互通（旧版叫“隔空投送与接力”）→ 开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；iPad：设置 → 通用 → 隔空播放与接力 → 接力。App 无法远程读取或修改 iPad 端开关")
     }
 
     private nonisolated static func betterDisplayStatus(backend: VirtualDisplayBackend = .auto) -> (ok: Bool, detail: String) {
@@ -658,17 +746,51 @@ final class SetupModel: ObservableObject {
 
     private nonisolated static func shortcutsStatus() -> (ok: Bool, detail: String) {
         let path = "/System/Applications/Shortcuts.app"
-        return (FileManager.default.fileExists(atPath: path),
-                "需要用户在快捷指令中创建“连接 Sidecar”和“断开 Sidecar”两个动作")
+        guard FileManager.default.fileExists(atPath: path) else {
+            return (false, "系统没有找到 macOS 快捷指令 App")
+        }
+        let output = command("/usr/bin/shortcuts", ["list"], timeout: 5)
+        let names = Set(output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
+        let connect = names.contains("连接 Sidecar")
+        let disconnect = names.contains("断开 Sidecar")
+        if connect && disconnect {
+            return (true, "已找到“连接 Sidecar”和“断开 Sidecar”；可在快捷指令详情中设置键盘快捷键")
+        }
+        if connect || disconnect {
+            let missing = connect ? "断开 Sidecar" : "连接 Sidecar"
+            return (false, "已找到一个快捷指令，还缺少“\(missing)”；点击“一键创建快捷指令”继续")
+        }
+        return (false, "尚未创建“连接 Sidecar”和“断开 Sidecar”；点击“一键创建快捷指令”导入")
     }
 
-    private nonisolated static func fileVaultStatus() -> String {
+    private nonisolated static func fileVaultStatus() ->
+        (enabled: Bool, state: CheckState, detail: String) {
         let output = command("/usr/bin/fdesetup", ["status"]).trimmingCharacters(in: .whitespacesAndNewlines)
-        if output.isEmpty { return "无法读取 FileVault 状态；冷启动登录仍由 macOS 安全策略控制" }
-        if output.localizedCaseInsensitiveContains("on") {
-            return "FileVault 已开启；冷启动必须先在解密界面输入密码，普通 App 无法代办"
+        if output.isEmpty {
+            return (false, .unknown,
+                    "无法读取文件保险箱状态；请打开系统设置确认。")
         }
-        return "\(output)；登录后提示脚本只在桌面会话中运行"
+        if output.localizedCaseInsensitiveContains("on") {
+            return (true, .warning,
+                    "文件保险箱已开启；冷启动必须先在解密界面输入密码。普通 App 无法代办，也不会保存或盲打密码。")
+        }
+        if output.localizedCaseInsensitiveContains("off") {
+            return (false, .warning,
+                    "文件保险箱未开启；自动登录是否可用仍由 macOS 的登录选项和组织策略决定。关闭它会降低启动前保护。")
+        }
+        return (false, .unknown,
+                "\(output)；冷启动登录仍由 macOS 安全策略控制。")
+    }
+
+    private nonisolated static func autoLoginStatus(fileVaultEnabled: Bool) ->
+        (state: CheckState, detail: String) {
+        if fileVaultEnabled {
+            return (.warning,
+                    "文件保险箱开启时，macOS 会禁用自动登录。请先在“用户与群组”查看系统显示的状态；App 不会建议关闭启动保护。")
+        }
+        return (.unknown,
+                "自动登录由 macOS 的“用户与群组”设置、账户密码和组织策略决定；App 只能打开设置页，不能保存或输入密码。")
     }
 
     private struct ProcessResult: Sendable {
@@ -717,7 +839,8 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
-            "sidecar-doctor.sh"
+            "sidecar-doctor.sh",
+            "install-sidecar-shortcuts.sh"
         ]
         let fileManager = FileManager.default
         return binaries.allSatisfy {
@@ -744,7 +867,8 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
-            "sidecar-doctor.sh"
+            "sidecar-doctor.sh",
+            "install-sidecar-shortcuts.sh"
         ]
         let binDirectory = URL(fileURLWithPath: "\(NSHomeDirectory())/.local/bin", isDirectory: true)
         let configDirectory = URL(fileURLWithPath: "\(NSHomeDirectory())/.config/sidecar-auto", isDirectory: true)
@@ -981,7 +1105,7 @@ private struct SetupView: View {
 
     private var quickActions: some View {
         Panel {
-            PanelTitle(title: "常用操作", subtitle: "只有点击按钮才会执行连接或断开。", symbol: "bolt.fill")
+            PanelTitle(title: "常用操作", subtitle: "连接、断开和配置操作都只在你点击后执行。", symbol: "bolt.fill")
             HStack(spacing: 12) {
                 Button { section = .config } label: { Label("编辑连接设置", systemImage: "slider.horizontal.3") }
                     .buttonStyle(.borderedProminent)
@@ -992,6 +1116,13 @@ private struct SetupView: View {
                 }
                 Button { section = .checks } label: { Label("查看环境检查", systemImage: "checkmark.shield") }
                     .buttonStyle(.bordered)
+                if model.checks.first(where: { $0.id == "shortcuts" && $0.state != .good }) != nil {
+                    Button { model.perform(.installShortcuts) } label: {
+                        Label("一键配置快捷指令", systemImage: "keyboard.badge.ellipsis")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isInstalling || model.isOperating)
+                }
                 Button { section = .test } label: { Label("打开手动测试", systemImage: "play.circle") }
                     .buttonStyle(.bordered)
             }
@@ -1033,7 +1164,7 @@ private struct SetupView: View {
             Panel {
                 PanelTitle(title: "无线连接", subtitle: "不会在 App 启动或刷新时抢占 iPad。", symbol: "wifi")
                 Toggle("连接无线 Sidecar 前尝试开启 Mac 侧接力", isOn: $model.config.autoEnableHandoff)
-                Text("请在两端手动确认接力已开启：Mac：系统设置 → 通用 → 隔空投送与接力；iPad：设置 → 通用 → 隔空播放与接力 → 接力。此 App 不能远程读取或修改 iPad 设置。")
+                Text("请在两端手动确认接力已开启。Mac：系统设置 → 通用 → 隔空投送与连续互通（旧版叫“隔空投送与接力”）→ 开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；iPad：设置 → 通用 → 隔空播放与接力 → 接力。此 App 不能远程读取或修改 iPad 设置。")
                     .font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

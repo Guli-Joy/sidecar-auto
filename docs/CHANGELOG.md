@@ -23,6 +23,10 @@
 - Added an explicit Bluetooth permission flow: the app triggers the native macOS
   confirmation only after the user clicks, refreshes after returning from Settings,
   and avoids requesting unnecessary Accessibility or Screen Recording access.
+- Added one-click Shortcut template generation: the app installs the local helper,
+  signs the two shell-action templates, and opens Apple's confirmation flow one at a
+  time. Added the current macOS 27 AirDrop/Handoff settings deep link and separate
+  FileVault and automatic-login guidance.
 
 ## 2026-09-30
 

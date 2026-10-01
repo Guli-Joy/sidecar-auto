@@ -89,7 +89,7 @@ Command Line Tools。
 
 - Mac 使用 macOS 13 或更高版本；需要 Xcode Command Line Tools（`swiftc`、`clang`、macOS SDK）。
 - iPad 支持 Sidecar，与 Mac 登录同一个 Apple Account，并开启双重认证。
-- 无线模式要求两台设备都打开 Wi‑Fi、蓝牙和接力（Handoff），保持唤醒并在约 10 米内。Mac 在“系统设置 → 通用 → 隔空投送与接力 → 接力”开启接力；iPad 在“设置 → 通用 → 隔空播放与接力 → 接力”开启接力。`ForceAWDL` 是设备到设备的无线路径，不要求连接同一个路由器；Wi-Fi 无路由器、无显示器场景仍取决于具体 macOS、硬件和权限，应按[排障](#排障)实际验证。
+- 无线模式要求两台设备都打开 Wi‑Fi、蓝牙和接力（Handoff），保持唤醒并在约 10 米内。Mac 在“系统设置 → 通用 → 隔空投送与连续互通”（旧版 macOS 叫“隔空投送与接力”）中开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；iPad 在“设置 → 通用 → 隔空播放与接力 → 接力”开启接力。`ForceAWDL` 是设备到设备的无线路径，不要求连接同一个路由器；Wi-Fi 无路由器、无显示器场景仍取决于具体 macOS、硬件和权限，应按[排障](#排障)实际验证。
 - 有线模式要求使用可传输数据的 USB 线，并在 iPad 上信任这台 Mac。仅供电的线不会被 USB 检测器识别，会按无线模式处理。
 - 无显示器模式默认不需要 BetterDisplay：项目内置 helper 提供固定的 1920×1080、60Hz 虚拟屏。它调用 macOS 未公开的虚拟显示接口，系统更新可能失效；需要 HiDPI、更多分辨率、排列或其他参数时可选择 BetterDisplay。
 - iPad 必须唤醒并解锁。Sidecar 不能在锁定的 iPad 上创建屏幕会话。
@@ -110,8 +110,9 @@ cd /path/to/sidecar-auto
 - 检查 Mach-O 输出后逐个原子替换 `~/.local/bin` 中的文件；
 - 创建 `~/.config/sidecar-auto/config` 示例（已有配置不会覆盖）；
 - 安装只读诊断脚本 `sidecar-doctor.sh`。
+- 安装快捷指令导入工具 `install-sidecar-shortcuts.sh`。
 
-安装器不会安装 BetterDisplay，不会自动启动 Sidecar，不会创建快捷指令，不会授予 Bluetooth、辅助功能或屏幕录制权限，也不会加载后台重连服务。缺少编译工具时先运行：
+安装器不会安装 BetterDisplay，不会自动启动 Sidecar，不会授予 Bluetooth、辅助功能或屏幕录制权限，也不会加载后台重连服务。设置助手安装运行时后可一键生成快捷指令导入文件；macOS 仍会对每个快捷指令显示“添加快捷指令”确认，这是系统安全要求。缺少编译工具时先运行：
 
 ```sh
 xcode-select --install
@@ -143,7 +144,7 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 
 ## 创建 macOS 快捷指令和快捷键
 
-在 macOS“快捷指令”中分别创建三个“运行 Shell 脚本”动作：
+在设置助手“环境检查”中点击“一键创建快捷指令”，即可生成并打开两个快捷指令的导入确认窗口。请先在第一个窗口点击“添加快捷指令”，设置助手会在确认完成后再打开第二个窗口；最后按需要在快捷指令详情中设置键盘快捷键。macOS 不提供静默导入 API，因此这两次确认无法省略。命令行用户也可以执行 `~/.local/bin/install-sidecar-shortcuts.sh`。手动创建时，在 macOS“快捷指令”中分别创建下表所需的三个“运行 Shell 脚本”动作：
 
 | 快捷指令 | 脚本 | 建议快捷键 |
 | --- | --- | --- |
@@ -222,7 +223,7 @@ launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sidecarauto.l
 launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sidecarauto.login-ready.plist"
 ```
 
-启用 FileVault 时，冷启动会停在解密密码界面，macOS 不允许普通自动登录。关闭 FileVault 并等待解密会降低启动前保护，项目不会替用户作出这个决定，也不会保存或盲打密码。登录提示脚本不运行在 FileVault 解锁界面。
+启用 FileVault 时，冷启动会停在解密密码界面，macOS 不允许普通自动登录。设置助手会分别提供“文件保险箱”和“自动登录”设置入口，但不会替用户关闭 FileVault、保存密码或盲打密码。关闭 FileVault 并等待解密会降低启动前保护；登录提示脚本不运行在 FileVault 解锁界面。
 
 ## 开发和验证
 
