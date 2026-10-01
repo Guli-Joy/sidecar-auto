@@ -4,27 +4,37 @@ import SwiftUI
 
 @MainActor
 final class SidecarAutoAppDelegate: NSObject, NSApplicationDelegate {
-    private weak var mainWindow: NSWindow?
-    private var windowObserver: NSObjectProtocol?
+    /// SwiftUI's `openWindow` action is scene-scoped. Keep the action supplied
+    /// by the menu-bar scene so reopening still works after the last window was
+    /// closed and the WindowGroup has released its NSWindow instance.
+    private var openMainWindowAction: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Closing the settings window must not terminate the process: the
         // menu-bar item is the recovery path for headless use.
         NSApp.applicationIconImage = NSImage(named: NSImage.applicationIconName)
-        windowObserver = NotificationCenter.default.addObserver(
-            forName: NSWindow.didBecomeKeyNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let window = notification.object as? NSWindow,
-                  window.styleMask.contains(.titled),
-                  !(window is NSPanel) else { return }
-            Task { @MainActor [weak self] in self?.mainWindow = window }
-        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func registerMainWindowOpener(_ action: @escaping () -> Void) {
+        openMainWindowAction = action
+    }
+
+    func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let action = openMainWindowAction {
+            action()
+            return
+        }
+        // The status item can appear before MenuBarContent has rendered. Give
+        // SwiftUI one turn to install the scene action, then try again.
+        DispatchQueue.main.async { [weak self] in
+            self?.openMainWindowAction?()
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -32,26 +42,6 @@ final class SidecarAutoAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
-    func showMainWindow() {
-        NSApp.activate(ignoringOtherApps: true)
-        if let window = mainWindow {
-            if window.isMiniaturized { window.deminiaturize(nil) }
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        // The first launch can race WindowGroup creation. Retry after SwiftUI
-        // has materialized its NSWindow instead of opening a duplicate window.
-        DispatchQueue.main.async { [weak self] in
-            self?.mainWindow = NSApp.windows.first(where: {
-                $0.styleMask.contains(.titled) && !($0 is NSPanel)
-            })
-            self?.mainWindow?.makeKeyAndOrderFront(nil)
-        }
-    }
-
-    deinit {
-        if let windowObserver { NotificationCenter.default.removeObserver(windowObserver) }
-    }
 }
 
 @main
@@ -60,13 +50,31 @@ struct SidecarAutoSetupApp: App {
     @StateObject private var model = SetupModel()
 
     var body: some Scene {
-        WindowGroup {
-            SetupView(model: model)
+        WindowGroup("Sidecar Auto Setup", id: "main") {
+            SetupView(model: model, appDelegate: appDelegate)
                 .frame(minWidth: 820, minHeight: 680)
         }
         .windowResizability(.contentSize)
 
         MenuBarExtra {
+            MenuBarContent(model: model, appDelegate: appDelegate)
+        } label: {
+            Image(systemName: model.isOperating
+                  ? "rectangle.connected.to.line.below.fill"
+                  : "rectangle.connected.to.line.below")
+                .help("Sidecar Auto：打开设置或手动连接")
+        }
+        .menuBarExtraStyle(.menu)
+    }
+}
+
+private struct MenuBarContent: View {
+    @ObservedObject var model: SetupModel
+    let appDelegate: SidecarAutoAppDelegate
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(spacing: 0) {
             Button("打开设置") {
                 appDelegate.showMainWindow()
             }
@@ -84,13 +92,13 @@ struct SidecarAutoSetupApp: App {
             }
             Divider()
             Button("退出 Sidecar Auto") { NSApp.terminate(nil) }
-        } label: {
-            Image(systemName: model.isOperating
-                  ? "rectangle.connected.to.line.below.fill"
-                  : "rectangle.connected.to.line.below")
-                .help("Sidecar Auto：打开设置或手动连接")
         }
-        .menuBarExtraStyle(.menu)
+        .onAppear {
+            appDelegate.registerMainWindowOpener {
+                openWindow(id: "main")
+                DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
+            }
+        }
     }
 }
 
@@ -360,9 +368,9 @@ final class SetupModel: ObservableObject {
                     ? "已识别 USB 设备“\(name)”；\(targetHint)，然后点击“保存设置”。"
                     : "已识别 USB 设备“\(name)”并填入序列号；\(targetHint)，然后点击“保存设置”。"
             } else if result.output.contains("USB_IPAD_AMBIGUOUS") {
-                self.scanMessage = self.usbCandidates.isEmpty
+                    self.scanMessage = self.usbCandidates.isEmpty
                     ? "检测到多台 iPad，请填写 USB 序列号后再保存。"
-                    : "检测到 (self.usbCandidates.count) 台 iPad，请在下方选择目标设备。"
+                    : "检测到 \(self.usbCandidates.count) 台 iPad，请在下方选择目标设备。"
             } else if result.output.contains("USB_IPAD_NOT_FOUND") {
                 self.scanMessage = "没有检测到 iPad 数据线；可以直接配置名称并使用无线连接。"
             } else {
@@ -471,7 +479,7 @@ final class SetupModel: ObservableObject {
             self.message = result.status == 0
                 ? (enable ? "已开启登录后桌面提示。重启并登录后会播报桌面已准备好，但不会自动连接 Sidecar。"
                           : "已停用登录后桌面提示。不会影响手动连接和快捷键。")
-                : "登录后提示设置失败：(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+                : "登录后提示设置失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
             self.refresh()
         }
     }
@@ -484,6 +492,12 @@ final class SetupModel: ObservableObject {
         if #available(macOS 10.15, *) {
             switch CBManager.authorization {
             case .notDetermined:
+                if Self.bluetoothPermissionWasRequested() {
+                    openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
+                    message = "此 App 已经向 macOS 申请过蓝牙权限。请在系统设置中确认 Sidecar Auto 的开关；不会重复弹出申请窗口。"
+                    return
+                }
+                Self.markBluetoothPermissionRequested()
                 isRequestingPermission = true
                 message = "正在申请蓝牙权限，请在系统提示中点击“允许”……"
                 bluetoothPermissionRequester = BluetoothPermissionRequester { [weak self] state in
@@ -991,7 +1005,8 @@ final class SetupModel: ObservableObject {
             CheckItem(id: "bluetooth", title: "蓝牙", detail: bluetooth.detail,
                       state: transport.isWired ? .optional : (bluetooth.ok ? .good : .action),
                       action: transport.isWired ? nil : (bluetooth.ok ? .refresh : .bluetooth),
-                      actionTitle: transport.isWired ? nil : (bluetooth.ok ? "重新检查" : "申请 / 开启"),
+                      actionTitle: transport.isWired ? nil : (bluetooth.ok ? "重新检查" :
+                        (bluetooth.detail.contains("已经申请过") ? "打开蓝牙设置" : "申请一次")),
                       required: !transport.isWired),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
                       // A positive result here means the Mac-side preference
@@ -1181,7 +1196,9 @@ final class SetupModel: ObservableObject {
                 authorization = "App 的蓝牙隐私授权受到系统限制"
                 authorized = false
             case .notDetermined:
-                authorization = "尚未申请蓝牙隐私授权；点击“申请 / 开启”后由 macOS 显示确认"
+                authorization = bluetoothPermissionWasRequested()
+                    ? "已经申请过蓝牙隐私授权；请在系统设置确认开关，不会在打开 App 时重复申请"
+                    : "尚未申请蓝牙隐私授权；只有点击“申请 / 开启”时才会由 macOS 显示确认"
                 authorized = false
             @unknown default:
                 authorization = "无法识别 App 的蓝牙隐私授权状态"
@@ -1200,6 +1217,21 @@ final class SetupModel: ObservableObject {
             detail = "Mac 蓝牙无线电已开启；\(authorization)"
         }
         return (radioOn && authorized, detail)
+    }
+
+    private nonisolated static var bluetoothPermissionMarkerURL: URL {
+        URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/Sidecar Auto/bluetooth-permission-requested")
+    }
+
+    private nonisolated static func bluetoothPermissionWasRequested() -> Bool {
+        FileManager.default.fileExists(atPath: bluetoothPermissionMarkerURL.path)
+    }
+
+    private nonisolated static func markBluetoothPermissionRequested() {
+        let url = bluetoothPermissionMarkerURL
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data("requested=1\n".utf8).write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     private nonisolated static func handoffStatus() -> (ok: Bool, detail: String) {
@@ -1658,6 +1690,8 @@ private enum SetupSection: String, CaseIterable, Identifiable {
 
 private struct SetupView: View {
     @ObservedObject var model: SetupModel
+    let appDelegate: SidecarAutoAppDelegate
+    @Environment(\.openWindow) private var openWindow
     @State private var section: SetupSection = .overview
     @AppStorage("sidecarAutoSetupHasSeenWizard") private var hasSeenWizard = false
     @State private var showingWizard = false
@@ -1687,6 +1721,10 @@ private struct SetupView: View {
             }
         }
         .onAppear {
+            appDelegate.registerMainWindowOpener {
+                openWindow(id: "main")
+                DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
+            }
             if !hasSeenWizard { showingWizard = true }
         }
     }
@@ -1937,73 +1975,135 @@ private struct SetupView: View {
 
     private var checksPage: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PageIntro(text: "这里的检查都是只读的。能由 App 发起的蓝牙授权会显示系统确认；返回本页后状态会自动刷新。")
-            Panel {
-                PanelTitle(title: "权限助手", subtitle: "只申请连接真正需要的权限。", symbol: "hand.raised.fill")
-                HStack(spacing: 12) {
-                    Text(model.bluetoothReady
-                         ? "蓝牙无线电已开启，Sidecar Auto 已获得蓝牙隐私授权。点击“重新检查蓝牙”可再次读取状态。辅助功能和屏幕录制对本项目不是必需项。"
-                         : "当前连接路径只需要蓝牙隐私授权。辅助功能和屏幕录制对本项目不是必需项，BetterDisplay 如有额外要求会由它自己申请。")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Button {
-                        if model.bluetoothReady {
-                            model.refresh()
-                        } else {
-                            model.requestBluetoothAccess()
-                        }
-                    } label: {
-                        Label(
-                            model.isRequestingPermission
-                                ? "申请中…"
-                                : model.bluetoothReady ? "重新检查蓝牙" : "申请 / 开启蓝牙",
-                            systemImage: "dot.radiowaves.left.and.right"
-                        )
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.isRequestingPermission || model.isInstalling || model.isOperating)
-                }
-            }
-            Panel {
-                PanelTitle(title: "BetterDisplay 检查向导", subtitle: "只读取安装、运行和能力状态，不会创建或移动虚拟屏。", symbol: "display.2")
-                HStack(alignment: .top, spacing: 12) {
-                    Text(model.betterDisplayReport)
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    Button(model.isInspectingBetterDisplay ? "检查中…" : "检查 BetterDisplay") {
-                        model.inspectBetterDisplay()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isInspectingBetterDisplay || model.isInstalling || model.isOperating)
-                }
-            }
-            Panel {
-                PanelTitle(title: "登录后提示", subtitle: "可选；只播报桌面已准备好，不会自动连接 Sidecar。", symbol: "power.circle")
-                let loginAgent = model.checks.first(where: { $0.id == "login-agent" })
-                HStack(alignment: .top, spacing: 12) {
-                    Text(loginAgent?.detail ?? "正在读取登录项状态……")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 8)
-                    if let loginAgent, let action = loginAgent.action {
-                        Button(model.isManagingLoginAgent ? "处理中…" : (loginAgent.state == .good ? "停用提示" : "开启提示")) {
-                            model.perform(action)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(model.isManagingLoginAgent || model.isInstalling || model.isOperating)
-                    }
-                }
-            }
+            PageIntro(text: "这里只显示当前连接路径真正相关的状态。打开 App、刷新和关闭窗口都不会连接或断开 iPad；需要处理的项目会提供对应按钮。")
             if model.checks.isEmpty {
                 Panel { HStack { ProgressView(); Text("正在读取本机状态……").foregroundStyle(.secondary) } }
             } else {
-                VStack(spacing: 9) {
-                    ForEach(model.checks) { item in CheckRow(item: item) { action in model.perform(action) } }
+                connectionReadinessPanel
+                checkGroup(
+                    title: wiredTransport ? "本次有线连接需要" : "本次无线连接需要",
+                    subtitle: wiredTransport
+                        ? "已检测到 iPad 数据线，连接时会优先使用 USB；Wi‑Fi、蓝牙和接力不会阻塞这次有线连接。"
+                        : "未检测到 iPad 数据线，连接时会使用无线 Sidecar。Mac 端状态可在这里读取，iPad 端接力仍需你在 iPad 上确认。",
+                    ids: requiredCheckIDs
+                )
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 14) {
+                        checkGroup(
+                            title: "可选诊断和工具",
+                            subtitle: "这些项目不会阻塞普通连接，只有使用对应功能时才需要处理。",
+                            ids: optionalCheckIDs
+                        )
+                        betterDisplayInspectionPanel
+                        loginAgentPanel
+                    }
+                    .padding(.top, 8)
+                } label: {
+                    Label("查看可选诊断和高级功能", systemImage: "ellipsis.circle")
+                        .font(.headline)
                 }
             }
             if !model.installerLog.isEmpty { installerPanel }
+        }
+    }
+
+    private var wiredTransport: Bool {
+        model.checks.first(where: { $0.id == "transport" })?.detail.contains("已检测到 iPad 数据线") == true
+    }
+
+    private var requiredCheckIDs: [String] {
+        let required = Set(model.checks.filter(\.required).map(\.id))
+        let preferred = ["mac", "runtime", "config", "transport", "wifi", "bluetooth", "handoff",
+                         "builtin-virtual", "betterdisplay"]
+        return preferred.filter { required.contains($0) }
+    }
+
+    private var optionalCheckIDs: [String] {
+        let optional = Set(model.checks.filter { !$0.required }.map(\.id))
+        let preferred = ["session", "shortcuts", "filevault", "autologin", "login-agent",
+                         "accessibility", "screen", "builtin-virtual", "betterdisplay"]
+        return preferred.filter { optional.contains($0) }
+    }
+
+    private var connectionReadinessPanel: some View {
+        let total = model.requiredCount
+        let passed = model.goodCount
+        return Panel {
+            PanelTitle(
+                title: wiredTransport ? "有线连接路径" : "无线连接路径",
+                subtitle: wiredTransport ? "USB iPad 已识别" : "未检测到 USB iPad，将按无线条件连接",
+                symbol: wiredTransport ? "cable.connector" : "wifi"
+            )
+            HStack(alignment: .lastTextBaseline, spacing: 8) {
+                Text(total == 0 ? "—" : "\(passed)/\(total)")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.sidecarBlue)
+                Text("Mac 端状态已确认").foregroundStyle(.secondary)
+                Spacer()
+                if !wiredTransport {
+                    Text("iPad 端接力需要在 iPad 上开启")
+                        .font(.caption.weight(.semibold)).foregroundStyle(.orange)
+                }
+            }
+            ProgressView(value: total == 0 ? 0 : Double(passed) / Double(total)).tint(Color.sidecarBlue)
+            Text(wiredTransport
+                 ? "当前只需保持 iPad 解锁并信任这台 Mac。拔掉数据线后，App 会自动改用无线条件。"
+                 : "请在 iPad：设置 → 通用 → 隔空播放与接力 → 开启“接力”，并保持 iPad 解锁。App 无法从 Mac 读取 iPad 端开关。")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var betterDisplayInspectionPanel: some View {
+        Panel {
+            PanelTitle(title: "BetterDisplay 检查向导", subtitle: "只读取安装、运行和能力状态，不会创建或移动虚拟屏。", symbol: "display.2")
+            HStack(alignment: .top, spacing: 12) {
+                Text(model.betterDisplayReport)
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(model.isInspectingBetterDisplay ? "检查中…" : "检查 BetterDisplay") {
+                    model.inspectBetterDisplay()
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.isInspectingBetterDisplay || model.isInstalling || model.isOperating)
+            }
+        }
+    }
+
+    private var loginAgentPanel: some View {
+        Panel {
+            PanelTitle(title: "登录后提示", subtitle: "可选；只播报桌面已准备好，不会自动连接 Sidecar。", symbol: "power.circle")
+            let loginAgent = model.checks.first(where: { $0.id == "login-agent" })
+            HStack(alignment: .top, spacing: 12) {
+                Text(loginAgent?.detail ?? "正在读取登录项状态……")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                if let loginAgent, let action = loginAgent.action {
+                    Button(model.isManagingLoginAgent ? "处理中…" : (loginAgent.state == .good ? "停用提示" : "开启提示")) {
+                        model.perform(action)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isManagingLoginAgent || model.isInstalling || model.isOperating)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func checkGroup(title: String, subtitle: String, ids: [String]) -> some View {
+        let items = ids.compactMap { id in model.checks.first(where: { $0.id == id }) }
+        if !items.isEmpty {
+            VStack(alignment: .leading, spacing: 9) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.headline)
+                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                ForEach(items) { item in
+                    CheckRow(item: item) { action in model.perform(action) }
+                }
+            }
         }
     }
 

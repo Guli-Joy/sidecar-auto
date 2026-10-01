@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Fixed the menu-bar recovery path by keeping a scene-scoped openWindow
+  action in the app delegate. Closing the settings window no longer leaves
+  “打开设置” without a window to show. Reorganized the environment page into
+  a current wired/wireless readiness card, required checks, and a collapsed
+  optional diagnostics section so FileVault, Shortcuts, BetterDisplay and
+  non-required privacy items cannot inflate or obscure connection readiness.
+- Bluetooth permission requests are now user-triggered only. The app records
+  that it has already requested access and opens the Bluetooth privacy pane
+  instead of repeatedly creating a new authorization prompt.
+
 - Added a read-only BetterDisplay inspection panel, cancellable manual operations
   with live diagnostic-tail updates. Cancellation now terminates the active
   controller's child processes and the log view is scoped to the current run;
