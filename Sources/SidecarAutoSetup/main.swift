@@ -42,7 +42,7 @@ enum CheckState: Sendable {
     }
 }
 
-enum CheckAction: Sendable {
+enum CheckAction: Sendable, Equatable {
     case install, refresh, bluetooth, handoff
     case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions
 }
@@ -157,6 +157,23 @@ final class SetupModel: ObservableObject {
     /// “Mac 已开启” while still contributing to the setup progress.
     var goodCount: Int {
         checks.filter { $0.required && ($0.state == .good || $0.state == .partial) }.count
+    }
+
+    /// A manual connection test is useful only after the local runtime and a
+    /// target have been configured.  Transport-specific checks are still
+    /// allowed to be incomplete here because the one-shot controller gives a
+    /// more precise wired/wireless diagnostic after the user presses Connect.
+    var canRunConnection: Bool {
+        let runtimeReady = checks.first(where: { $0.id == "runtime" })?.state == .good
+        let targetReady = checks.first(where: { $0.id == "config" })?.state == .good
+        return runtimeReady && targetReady && !isInstalling
+    }
+
+    var connectionPrerequisiteSummary: String {
+        if canRunConnection { return "运行时和目标 iPad 已就绪；连接时会自动选择有线或无线。" }
+        let missing = checks.filter { ["runtime", "config"].contains($0.id) && $0.state != .good }
+            .map(\.title)
+        return missing.isEmpty ? "正在读取连接前置条件……" : "请先完成：\(missing.joined(separator: "、"))。"
     }
 
     /// `true` only means that the local Mac radio and this app's Bluetooth
@@ -654,12 +671,18 @@ final class SetupModel: ObservableObject {
                       actionTitle: handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
             CheckItem(id: "accessibility", title: "辅助功能权限", detail:
                       "当前连接路径不需要辅助功能权限；只有启用需要 UI 自动化的可选功能时才需要手动授权。",
-                      state: .good, action: nil, actionTitle: nil),
+                      state: .optional, action: nil, actionTitle: nil, required: false),
             CheckItem(id: "screen", title: "屏幕录制权限", detail:
                       "当前连接和显示状态检查不需要屏幕录制权限；BetterDisplay 如有额外要求会在其应用内提示。",
-                      state: .good, action: nil, actionTitle: nil),
+                      state: .optional, action: nil, actionTitle: nil, required: false),
             CheckItem(id: "betterdisplay", title: "BetterDisplay", detail: betterDisplay.detail,
-                      state: betterDisplay.ok ? .good : .action, action: .betterDisplay, actionTitle: "打开 BetterDisplay"),
+                      state: config.virtualDisplayBackend == .betterdisplay
+                        ? (betterDisplay.ok ? .good : .action) : .optional,
+                      action: .betterDisplay,
+                      actionTitle: config.virtualDisplayBackend == .betterdisplay
+                        ? (betterDisplay.ok ? "打开 BetterDisplay" : "安装 / 打开 BetterDisplay")
+                        : "查看 BetterDisplay",
+                      required: config.virtualDisplayBackend == .betterdisplay),
             CheckItem(id: "builtin-virtual", title: "项目内置虚拟屏", detail: builtinVirtual.detail,
                       state: builtinVirtual.ok ? .good : .action,
                       action: builtinVirtual.ok ? .refresh : .install,
@@ -1192,11 +1215,11 @@ private struct SetupView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 14) {
+            HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(section.title).font(.title2.bold())
                 Text(section == .overview ? "让没有显示器的 Mac mini 把 iPad 作为主屏使用。" : model.message)
-                    .font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                    .font(.callout).foregroundStyle(.secondary).lineLimit(2)
             }
             Spacer()
             if model.isRefreshing { ProgressView().controlSize(.small) }
@@ -1261,7 +1284,8 @@ private struct SetupView: View {
             VStack(alignment: .leading, spacing: 11) {
                 StepLine(number: 1, title: "填写 iPad 名称", done: !model.config.iPadName.isEmpty)
                 StepLine(number: 2, title: "保存连接设置", done: model.checks.contains(where: { $0.id == "config" && $0.state == .good }))
-                StepLine(number: 3, title: "完成环境检查", done: model.goodCount > 3)
+                StepLine(number: 3, title: "完成环境检查",
+                         done: model.requiredCount > 0 && model.goodCount == model.requiredCount)
                 StepLine(number: 4, title: "按需手动测试", done: !model.operationLog.isEmpty)
             }
         }
@@ -1387,15 +1411,20 @@ private struct SetupView: View {
 
     private var testPage: some View {
         VStack(alignment: .leading, spacing: 18) {
-            PageIntro(text: "连接和断开只会在你点击按钮后执行一次。测试时请确保 iPad 已解锁，并准备好接受 Sidecar。")
+            PageIntro(text: "连接和断开只会在你点击按钮后执行一次。\(model.connectionPrerequisiteSummary) 测试时请确保 iPad 已解锁，并准备好接受 Sidecar。")
             Panel {
                 PanelTitle(title: "连接控制", subtitle: model.isOperating ? "正在执行，请稍候……" : "不会设置后台自动抢占。", symbol: "rectangle.connected.to.line.below")
                 HStack(spacing: 12) {
                     Button { model.connect() } label: { Label("连接一次", systemImage: "rectangle.connected.to.line.below") }
-                        .buttonStyle(.borderedProminent).disabled(model.isOperating || model.isInstalling)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(model.isOperating || model.isInstalling || !model.canRunConnection)
                     Button { model.disconnect() } label: { Label("断开一次", systemImage: "rectangle.portrait.and.arrow.right") }
-                        .buttonStyle(.bordered).disabled(model.isOperating || model.isInstalling)
+                        .buttonStyle(.bordered).disabled(model.isOperating || model.isInstalling || !model.canRunConnection)
                     if model.isOperating { ProgressView().controlSize(.small) }
+                }
+                if !model.canRunConnection {
+                    Label(model.connectionPrerequisiteSummary, systemImage: "info.circle")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             if !model.operationLog.isEmpty { logPanel(title: "最近一次操作输出", text: model.operationLog) }
@@ -1500,7 +1529,8 @@ private struct CheckRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 12)
-            if let itemAction = item.action, let title = item.actionTitle {
+            if let itemAction = item.action, let title = item.actionTitle,
+               item.state != .good || itemAction != .refresh {
                 Button(title) { action(itemAction) }.buttonStyle(.bordered).controlSize(.small)
             }
         }
