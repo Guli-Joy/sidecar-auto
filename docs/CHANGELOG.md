@@ -11,6 +11,11 @@
 - Bluetooth permission requests are now user-triggered only. The app records
   that it has already requested access and opens the Bluetooth privacy pane
   instead of repeatedly creating a new authorization prompt.
+- Improved Bluetooth status reconciliation after returning from System Settings:
+  the app reads CoreBluetooth authorization on the main queue and performs a
+  non-prompting manager callback check when macOS has not refreshed the cached
+  result. The optional diagnostics section now keeps only the shortcut status,
+  combined startup-security rows, BetterDisplay inspection and login notice.
 
 - Added a read-only BetterDisplay inspection panel, cancellable manual operations
   with live diagnostic-tail updates. Cancellation now terminates the active

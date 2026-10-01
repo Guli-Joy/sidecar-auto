@@ -162,6 +162,32 @@ private final class BluetoothPermissionRequester: NSObject, CBCentralManagerDele
     }
 }
 
+/// Re-checks a decided TCC grant without showing another authorization
+/// prompt. This is used after the user enables Sidecar Auto in System
+/// Settings while the app is still open; a fresh CoreBluetooth callback is
+/// more reliable than a cached class-property value on some macOS releases.
+private final class BluetoothStatusProbe: NSObject, CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private let onState: @Sendable (CBManagerState) -> Void
+
+    init(onState: @escaping @Sendable (CBManagerState) -> Void) {
+        self.onState = onState
+        super.init()
+        manager = CBCentralManager(
+            delegate: self,
+            queue: .main,
+            options: [CBCentralManagerOptionShowPowerAlertKey: false]
+        )
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        let callback = onState
+        DispatchQueue.main.async {
+            callback(central.state)
+        }
+    }
+}
+
 enum VirtualDisplayBackend: String, CaseIterable, Identifiable, Sendable {
     case auto
     case builtin
@@ -235,6 +261,7 @@ final class SetupModel: ObservableObject {
 
     private let fileManager = FileManager.default
     private var bluetoothPermissionRequester: BluetoothPermissionRequester?
+    private var bluetoothStatusProbe: BluetoothStatusProbe?
     private var activeObserver: NSObjectProtocol?
     private var operationLogStartOffset: UInt64 = 0
 
@@ -299,6 +326,42 @@ final class SetupModel: ObservableObject {
             self?.checks = result
             self?.isRefreshing = false
             self?.message = "状态已更新。需要用户确认的项目会显示操作按钮。"
+            self?.probeBluetoothIfNeeded()
+        }
+    }
+
+    private func probeBluetoothIfNeeded() {
+        // A marker means the user has already seen the prompt. If the class
+        // property is stale after returning from System Settings, probe a
+        // decided grant as well; never create a manager for a genuinely
+        // not-determined state.
+        guard bluetoothStatusProbe == nil,
+              Self.bluetoothPermissionWasRequested(),
+              checks.first(where: { $0.id == "bluetooth" })?.detail.contains("已拒绝") == true
+        else { return }
+        bluetoothStatusProbe = BluetoothStatusProbe { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.applyBluetoothProbe(state)
+            }
+        }
+    }
+
+    private func applyBluetoothProbe(_ state: CBManagerState) {
+        defer { bluetoothStatusProbe = nil }
+        guard let index = checks.firstIndex(where: { $0.id == "bluetooth" }) else { return }
+        let current = checks[index]
+        switch state {
+        case .poweredOn:
+            checks[index] = CheckItem(
+                id: current.id, title: current.title,
+                detail: "Mac 蓝牙无线电已开启；App 的蓝牙隐私授权已允许（系统设置已同步）。",
+                state: .good, action: .refresh, actionTitle: "重新检查", required: current.required
+            )
+            message = "蓝牙权限已同步，环境状态已更新。"
+        case .unauthorized:
+            break
+        default:
+            break
         }
     }
 
@@ -1006,7 +1069,10 @@ final class SetupModel: ObservableObject {
                       state: transport.isWired ? .optional : (bluetooth.ok ? .good : .action),
                       action: transport.isWired ? nil : (bluetooth.ok ? .refresh : .bluetooth),
                       actionTitle: transport.isWired ? nil : (bluetooth.ok ? "重新检查" :
-                        (bluetooth.detail.contains("已经申请过") ? "打开蓝牙设置" : "申请一次")),
+                        (bluetooth.detail.contains("已经申请过") ||
+                         bluetooth.detail.contains("已拒绝") ||
+                         bluetooth.detail.contains("系统限制")
+                         ? "打开蓝牙设置" : "申请一次")),
                       required: !transport.isWired),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
                       // A positive result here means the Mac-side preference
@@ -1185,7 +1251,17 @@ final class SetupModel: ObservableObject {
         let authorization: String
         let authorized: Bool
         if #available(macOS 10.15, *) {
-            switch CBManager.authorization {
+            // CoreBluetooth's class property can be stale when read from the
+            // detached status worker immediately after returning from System
+            // Settings. Read it on the main queue, where CoreBluetooth
+            // delivers its authorization state changes.
+            let currentAuthorization: CBManagerAuthorization
+            if Thread.isMainThread {
+                currentAuthorization = CBManager.authorization
+            } else {
+                currentAuthorization = DispatchQueue.main.sync { CBManager.authorization }
+            }
+            switch currentAuthorization {
             case .allowedAlways:
                 authorization = "App 的蓝牙隐私授权已允许"
                 authorized = true
@@ -1994,6 +2070,7 @@ private struct SetupView: View {
                             subtitle: "这些项目不会阻塞普通连接，只有使用对应功能时才需要处理。",
                             ids: optionalCheckIDs
                         )
+                        securitySettingsPanel
                         betterDisplayInspectionPanel
                         loginAgentPanel
                     }
@@ -2020,8 +2097,7 @@ private struct SetupView: View {
 
     private var optionalCheckIDs: [String] {
         let optional = Set(model.checks.filter { !$0.required }.map(\.id))
-        let preferred = ["session", "shortcuts", "filevault", "autologin", "login-agent",
-                         "accessibility", "screen", "builtin-virtual", "betterdisplay"]
+        let preferred = ["shortcuts"]
         return preferred.filter { optional.contains($0) }
     }
 
@@ -2051,6 +2127,49 @@ private struct SetupView: View {
                  : "请在 iPad：设置 → 通用 → 隔空播放与接力 → 开启“接力”，并保持 iPad 解锁。App 无法从 Mac 读取 iPad 端开关。")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var securitySettingsPanel: some View {
+        let fileVault = model.checks.first(where: { $0.id == "filevault" })
+        let autoLogin = model.checks.first(where: { $0.id == "autologin" })
+        return Panel {
+            PanelTitle(title: "启动安全设置", subtitle: "可选；不会阻塞 Sidecar，也不会由 App 保存或输入密码。", symbol: "lock.shield")
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: fileVault?.state.symbol ?? CheckState.optional.symbol)
+                        .foregroundStyle(fileVault?.state.color ?? CheckState.optional.color)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("文件保险箱（FileVault）").font(.body.weight(.semibold))
+                        Text(fileVault?.detail ?? "正在读取状态……")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    if let fileVault, let action = fileVault.action {
+                        Button(fileVault.actionTitle ?? "查看") { model.perform(action) }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
+                }
+                Divider()
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: autoLogin?.state.symbol ?? CheckState.optional.symbol)
+                        .foregroundStyle(autoLogin?.state.color ?? CheckState.optional.color)
+                        .frame(width: 22)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("macOS 自动登录").font(.body.weight(.semibold))
+                        Text(autoLogin?.detail ?? "正在读取状态……")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 8)
+                    if let autoLogin, let action = autoLogin.action {
+                        Button(autoLogin.actionTitle ?? "查看") { model.perform(action) }
+                            .buttonStyle(.bordered).controlSize(.small)
+                    }
+                }
+            }
         }
     }
 
