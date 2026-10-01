@@ -838,8 +838,8 @@ final class SetupModel: ObservableObject {
         let connect = names.contains("连接 Sidecar") || names.contains("connect-sidecar")
         let disconnect = names.contains("断开 Sidecar") || names.contains("disconnect-sidecar")
         if connect && disconnect {
-            let connectKey = shortcutKeyConfigured(names: ["连接 Sidecar", "connect-sidecar"], equivalent: "@~^s")
-            let disconnectKey = shortcutKeyConfigured(names: ["断开 Sidecar", "disconnect-sidecar"], equivalent: "@~^d")
+            let connectKey = shortcutKeyConfigured(slug: "connect-sidecar", equivalent: "@~^s")
+            let disconnectKey = shortcutKeyConfigured(slug: "disconnect-sidecar", equivalent: "@~^d")
             if connectKey && disconnectKey {
                 return (true, "已找到连接和断开快捷指令；⌃⌥⌘S / ⌃⌥⌘D 已设置")
             }
@@ -856,19 +856,21 @@ final class SetupModel: ObservableObject {
     /// a keyboard shortcut is entered in its details panel. This is a local
     /// hint only; if a future macOS release removes the SQLite/pbs entries,
     /// the shortcut remains usable from the Shortcuts app itself.
-    private nonisolated static func shortcutKeyConfigured(names: [String], equivalent: String) -> Bool {
-        let database = "\(NSHomeDirectory())/Library/Shortcuts/Shortcuts.sqlite"
-        guard FileManager.default.isReadableFile(atPath: database) else { return false }
-        let escaped = names.map { $0.replacingOccurrences(of: "'", with: "''") }
-        let values = escaped.map { "'\($0)'" }.joined(separator: ",")
-        let query = "SELECT ZWORKFLOWID FROM ZSHORTCUT WHERE ZTOMBSTONED=0 AND ZNAME IN (\(values)) ORDER BY ZMODIFICATIONDATE DESC LIMIT 1;"
-        let workflowID = command("/usr/bin/sqlite3", ["-readonly", database, query], timeout: 2)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard workflowID.range(of: "^[A-Fa-f0-9-]{36}$", options: .regularExpression) != nil else {
+    private nonisolated static func shortcutKeyConfigured(slug: String, equivalent: String) -> Bool {
+        // Shortcuts.sqlite is protected by macOS privacy controls and is not
+        // readable by a normal GUI app. The installer records the workflow ID
+        // after import in this app-owned status file; defaults/pbs remains
+        // readable and lets us verify the key mapping without Full Disk Access.
+        let statusURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Application Support/Sidecar Auto/Shortcuts/\(slug).key-status")
+        guard let status = try? String(contentsOf: statusURL, encoding: .utf8),
+              status.split(separator: "\n").contains(where: { $0 == "configured=1" }),
+              let workflowLine = status.split(separator: "\n").first(where: { $0.hasPrefix("workflow_id=") }) else {
             return false
         }
-        let preferences = command("/usr/bin/defaults", ["read", "pbs", "NSServicesStatus"], timeout: 2)
-        guard let idRange = preferences.range(of: workflowID) else { return false }
+        let workflowID = workflowLine.dropFirst("workflow_id=".count)
+        guard workflowID.range(of: "^[A-Fa-f0-9-]{36}$", options: .regularExpression) != nil else { return false }
+        let preferences = command("/usr/bin/defaults", ["read", "pbs", "NSServicesStatus"], timeout: 5)
+        guard let idRange = preferences.range(of: String(workflowID)) else { return false }
         let entry = String(preferences[idRange.upperBound...].split(separator: "}", maxSplits: 1).first ?? "")
         return entry.contains("\"key_equivalent\" = \"\(equivalent)\";")
     }

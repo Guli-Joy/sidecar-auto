@@ -17,6 +17,19 @@ SHORTCUTS_APP="/System/Applications/Shortcuts.app"
 UUIDGEN_BIN="/usr/bin/uuidgen"
 SHORTCUTS_DB="$HOME/Library/Shortcuts/Shortcuts.sqlite"
 
+write_key_status() {
+    local slug="$1" equivalent="$2" configured="$3"
+    local status_file="$STATE_DIR/${slug}.key-status"
+    local temporary="${status_file}.$$"
+    cat >"$temporary" <<EOF
+workflow_id=${SHORTCUT_WORKFLOW_ID:-}
+equivalent=${equivalent}
+configured=${configured}
+EOF
+    chmod 600 "$temporary"
+    mv -f "$temporary" "$status_file"
+}
+
 fail() {
     printf '快捷指令安装失败：%s\n' "$*" >&2
     exit 1
@@ -119,6 +132,7 @@ has_shortcut() {
 
 set_keyboard_shortcut() {
     local name="$1" slug="$2" equivalent="$3" workflow_id service_key plist
+    SHORTCUT_WORKFLOW_ID=""
     # Shortcuts stores the optional service keyboard equivalent in the
     # per-user `pbs` preferences domain.  There is no public Shortcuts CLI for
     # this setting, but updating this preference is the same operation the
@@ -138,6 +152,7 @@ set_keyboard_shortcut() {
         sleep 1
     done
     [[ "$workflow_id" =~ ^[A-Fa-f0-9-]{36}$ ]] || return 1
+    SHORTCUT_WORKFLOW_ID="$workflow_id"
 
     plist="$STATE_DIR/pbs.$$.plist"
     if ! /usr/bin/defaults export pbs "$plist" >/dev/null 2>&1; then
@@ -183,8 +198,10 @@ install_one() {
             hotkey='@~^d'
         fi
         if set_keyboard_shortcut "$name" "$slug" "$hotkey"; then
+            write_key_status "$slug" "$hotkey" 1
             note "已尝试设置“${name}”键盘快捷键。"
         else
+            write_key_status "$slug" "$hotkey" 0
             note "无法自动设置“${name}”键盘快捷键；请在快捷指令详情中录入建议组合键。"
         fi
         return 0
@@ -214,8 +231,10 @@ install_one() {
                 hotkey='@~^d'
             fi
             if set_keyboard_shortcut "$name" "$slug" "$hotkey"; then
+                write_key_status "$slug" "$hotkey" 1
                 note "已尝试设置“${name}”键盘快捷键。"
             else
+                write_key_status "$slug" "$hotkey" 0
                 note "无法自动设置“${name}”键盘快捷键；请在快捷指令详情中录入建议组合键。"
             fi
             return 0
