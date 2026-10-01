@@ -17,6 +17,10 @@
   cancelled headless connections now reclaim virtual fallback displays created
   by that operation while preserving user-owned displays.
 
+- Added an in-app optional login-agent toggle. It reports whether the current
+  user's post-login desktop announcement is loaded and can enable or disable
+  it without starting Sidecar or touching iPad state.
+
 - Added a first-run configuration wizard, USB iPad scanning with automatic target
   field filling, separate Mac/iPad readiness messaging, and live connection-stage
   feedback in the manual test view.

@@ -218,6 +218,10 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 
 `sidecar-login-ready.sh` 只能在用户登录、桌面已经建立后运行。它播放提示音并播报“桌面已准备好”，不会输入密码、解锁 FileVault 或自动启动 Sidecar。
 
+设置助手“环境检查”中的“开启提示”会自动安装当前用户的 LaunchAgent；“停用提示”会
+卸载它。这个登录项只播报桌面就绪，不会自动连接、断开或抢占 iPad。重启后是否需要
+在 FileVault 解密界面输入密码，仍由 macOS 安全设置决定。
+
 如需安装对应的 LaunchAgent，先把模板中的两个占位符替换为当前用户路径：
 
 ```sh

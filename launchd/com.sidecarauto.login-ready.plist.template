@@ -13,6 +13,8 @@
   <true/>
   <key>ProcessType</key>
   <string>Interactive</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
   <key>StandardOutPath</key>
   <string>__LOG_PATH__.out.log</string>
   <key>StandardErrorPath</key>

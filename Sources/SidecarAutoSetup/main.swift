@@ -13,7 +13,7 @@ struct SidecarAutoSetupApp: App {
     }
 }
 
-enum CheckState: Sendable {
+enum CheckState: Sendable, Equatable {
     case good, partial, warning, action, unknown, optional
 
     var color: Color {
@@ -44,7 +44,7 @@ enum CheckState: Sendable {
 
 enum CheckAction: Sendable, Equatable {
     case install, refresh, bluetooth, handoff
-    case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions
+    case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions, loginAgent
 }
 
 /// Keeps a CoreBluetooth manager alive long enough for macOS to show the
@@ -137,6 +137,7 @@ final class SetupModel: ObservableObject {
     @Published var operationStage = ""
     @Published var isCancelRequested = false
     @Published var isRequestingPermission = false
+    @Published var isManagingLoginAgent = false
     @Published var isScanningIPad = false
     @Published var scanMessage = ""
     @Published var usbCandidates: [USBIPadCandidate] = []
@@ -367,6 +368,30 @@ final class SetupModel: ObservableObject {
         case .loginOptions:
             openSettings("x-apple.systempreferences:com.apple.Users-Groups-Settings.extension")
             message = "已打开“用户与群组”。请查看“自动登录为”；文件保险箱开启时 macOS 会禁用此选项。"
+        case .loginAgent:
+            toggleLoginAgent()
+        }
+    }
+
+    /// Manage only the optional post-login announcement. This LaunchAgent is
+    /// deliberately not a Sidecar reconnect service: logging in must never
+    /// claim or disconnect an iPad without an explicit user action.
+    private func toggleLoginAgent() {
+        guard !isManagingLoginAgent else { return }
+        isManagingLoginAgent = true
+        let enable = !Self.loginAgentIsLoaded()
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.setLoginAgent(enabled: enable)
+        }
+        Task { @MainActor [weak self] in
+            let result = await worker.value
+            guard let self else { return }
+            self.isManagingLoginAgent = false
+            self.message = result.status == 0
+                ? (enable ? "已开启登录后桌面提示。重启并登录后会播报桌面已准备好，但不会自动连接 Sidecar。"
+                          : "已停用登录后桌面提示。不会影响手动连接和快捷键。")
+                : "登录后提示设置失败：(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+            self.refresh()
         }
     }
 
@@ -858,6 +883,7 @@ final class SetupModel: ObservableObject {
         let shortcuts = shortcutsStatus()
         let fileVault = fileVaultStatus()
         let autoLogin = autoLoginStatus(fileVaultEnabled: fileVault.enabled)
+        let loginAgent = loginAgentStatus()
 
         return [
             CheckItem(id: "mac", title: "macOS 版本", detail: macOK
@@ -930,7 +956,10 @@ final class SetupModel: ObservableObject {
                       required: false),
             CheckItem(id: "autologin", title: "macOS 自动登录", detail: autoLogin.detail,
                       state: autoLogin.state, action: .loginOptions, actionTitle: "查看自动登录选项",
-                      required: false)
+                      required: false),
+            CheckItem(id: "login-agent", title: "登录后桌面提示", detail: loginAgent.detail,
+                      state: loginAgent.ok ? .good : .optional, action: .loginAgent,
+                      actionTitle: loginAgent.ok ? "停用提示" : "开启提示", required: false)
         ]
     }
 
@@ -1292,6 +1321,80 @@ final class SetupModel: ObservableObject {
         }
         return (.optional,
                 "可选安全设置：自动登录由 macOS 的“用户与群组”设置、账户密码和组织策略决定；App 只能打开设置页，不能保存或输入密码。")
+    }
+
+    private nonisolated static let loginAgentLabel = "com.sidecarauto.login-ready"
+
+    private nonisolated static func loginAgentURL() -> URL {
+        URL(fileURLWithPath: "\(NSHomeDirectory())/Library/LaunchAgents/\(loginAgentLabel).plist")
+    }
+
+    private nonisolated static func loginAgentTarget() -> String {
+        "gui/\(getuid())/\(loginAgentLabel)"
+    }
+
+    private nonisolated static func loginReadyScriptURL() -> String {
+        "\(NSHomeDirectory())/.local/bin/sidecar-login-ready.sh"
+    }
+
+    private nonisolated static func loginAgentIsLoaded() -> Bool {
+        execute(executable: "/bin/launchctl", arguments: ["print", loginAgentTarget()]).status == 0
+    }
+
+    private nonisolated static func loginAgentStatus() -> (ok: Bool, detail: String) {
+        let plistExists = FileManager.default.fileExists(atPath: loginAgentURL().path)
+        let scriptExists = FileManager.default.isExecutableFile(atPath: loginReadyScriptURL())
+        guard scriptExists else {
+            return (false, "尚未安装登录提示脚本；先点击“安装 / 修复工具”。")
+        }
+        if loginAgentIsLoaded() {
+            return (true, "已开启：每次用户登录后播报桌面已准备好；不会自动连接或抢占 iPad。")
+        }
+        if plistExists {
+            return (false, "已创建登录项但当前未加载；点击“开启提示”可重新加载。")
+        }
+        return (false, "未开启登录后提示；这是可选项，不影响手动连接和快捷键。")
+    }
+
+    private nonisolated static func loginAgentPlist() -> Data? {
+        let logBase = "\(NSHomeDirectory())/Library/Logs/sidecar-auto-login-ready"
+        let object: [String: Any] = [
+            "Label": loginAgentLabel,
+            "ProgramArguments": [loginReadyScriptURL()],
+            "RunAtLoad": true,
+            "ProcessType": "Interactive",
+            "LimitLoadToSessionType": "Aqua",
+            "StandardOutPath": "\(logBase).out.log",
+            "StandardErrorPath": "\(logBase).err.log"
+        ]
+        return try? PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0)
+    }
+
+    private nonisolated static func setLoginAgent(enabled: Bool) -> ProcessResult {
+        let url = loginAgentURL()
+        let manager = FileManager.default
+        do {
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if enabled {
+                guard manager.isExecutableFile(atPath: loginReadyScriptURL()),
+                      let data = loginAgentPlist() else {
+                    return ProcessResult(status: 127, output: "找不到登录提示脚本，请先安装 / 修复工具。")
+                }
+                try data.write(to: url, options: .atomic)
+                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                _ = execute(executable: "/bin/launchctl", arguments: ["bootout", loginAgentTarget()])
+                let loaded = execute(executable: "/bin/launchctl", arguments: ["bootstrap", "gui/\(getuid())", url.path])
+                guard loaded.status == 0 else {
+                    return ProcessResult(status: loaded.status, output: loaded.output.isEmpty ? "launchctl bootstrap 失败" : loaded.output)
+                }
+                return ProcessResult(status: 0, output: "登录后提示已加载。")
+            }
+            _ = execute(executable: "/bin/launchctl", arguments: ["bootout", loginAgentTarget()])
+            try? manager.removeItem(at: url)
+            return ProcessResult(status: 0, output: "登录后提示已停用。")
+        } catch {
+            return ProcessResult(status: 1, output: error.localizedDescription)
+        }
     }
 
     private struct ProcessResult: Sendable {
@@ -1793,6 +1896,23 @@ private struct SetupView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(model.isInspectingBetterDisplay || model.isInstalling || model.isOperating)
+                }
+            }
+            Panel {
+                PanelTitle(title: "登录后提示", subtitle: "可选；只播报桌面已准备好，不会自动连接 Sidecar。", symbol: "power.circle")
+                let loginAgent = model.checks.first(where: { $0.id == "login-agent" })
+                HStack(alignment: .top, spacing: 12) {
+                    Text(loginAgent?.detail ?? "正在读取登录项状态……")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    if let loginAgent, let action = loginAgent.action {
+                        Button(model.isManagingLoginAgent ? "处理中…" : (loginAgent.state == .good ? "停用提示" : "开启提示")) {
+                            model.perform(action)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isManagingLoginAgent || model.isInstalling || model.isOperating)
+                    }
                 }
             }
             if model.checks.isEmpty {

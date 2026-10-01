@@ -46,7 +46,7 @@ TCC 授权针对请求访问的应用或进程身份。设置助手获得的授�
 | 接力（Handoff） | 无线核心条件 | 只能读取/尽力写入 Mac 偏好；没有可靠的跨设备有效状态 API | 在 Mac 和 iPad 手动开启，并使用同一 Apple Account 和双重认证 | 不能远程改变 iPad 开关，也不能把 `defaults` 写入成功当成运行时成功 |
 | 项目内置虚拟屏 | 无显示器可选后端 | 检查 helper、状态文件和在线显示拓扑 | 允许用户会话中的 helper 运行；遇到系统兼容问题时切换后端 | 不能保证未公开 SPI 在未来 macOS 继续可用，也不能静默授予 TCC |
 | BetterDisplay | 高级无显示器后端 | 检查 bundle/进程；仅在已运行时查询 CLI 的 `proAvailable` 和虚拟屏状态 | 安装、首次打开、启用虚拟屏和接受其许可/试用条款 | 不能代替安装、绕过 Pro/试用授权或保证其内部 TCC 状态 |
-| 登录项/LaunchAgent | 可选 | macOS 13+ 使用 `SMAppService.status`；旧模板用 `launchctl` 只读核验 | 用户批准“登录时打开” | 不能伪报后台已启用，不能在登录前显示 Sidecar |
+| 登录项/LaunchAgent | 可选 | 设置助手用当前用户的 `launchctl print` 只读核验，并把 plist 限制在 Aqua 用户会话 | 用户在设置助手中明确开启或停用 | 不能伪报后台已启用，不能在登录前显示 Sidecar |
 
 CoreBluetooth 的授权状态与“蓝牙无线电已开启”是两个状态，设置助手必须分别
 显示。`AXIsProcessTrustedWithOptions` 和 `CGPreflightScreenCaptureAccess` 的
