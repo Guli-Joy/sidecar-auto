@@ -15,7 +15,7 @@ Tools，也不需要在终端输入命令。
    Release 应使用 Developer ID 签名并完成 Apple 公证。
 4. 点击“安装 / 修复”。App 会把预编译运行时复制到
    `~/.local/bin/`，创建 `~/.config/sidecar-auto/config`，已有配置不会覆盖。
-5. 点击“重新检查”，确认状态卡片中的项目已经读取完成。选择“项目内置虚拟屏”时不需要安装 BetterDisplay；选择“BetterDisplay（高级参数）”时，无实体显示器连接才会要求 BetterDisplay CLI。
+5. 点击“重新检查”，确认状态卡片中的项目已经读取完成。状态卡片会根据当前是否插着 iPad 数据线自动切换前置条件：有线模式不会把 Wi‑Fi、蓝牙和接力当成阻塞项；未插线时才检查无线条件。选择“项目内置虚拟屏”时不需要安装 BetterDisplay；选择“BetterDisplay（高级参数）”时，无实体显示器连接才会要求 BetterDisplay CLI。辅助功能、屏幕录制和未选中的虚拟屏后端只显示为可选能力，不会把准备度分母人为增加。
 
 不要从 GitHub 的 **Code → Download ZIP** 代替正式 Release 给普通用户使用。
 ZIP 是源代码，适合开发者；它不能代替签名和公证后的 App。

@@ -1382,7 +1382,7 @@ private struct SetupView: View {
                     Picker("使用方案", selection: $model.config.virtualDisplayBackend) {
                         ForEach(VirtualDisplayBackend.allCases) { backend in Text(backend.title).tag(backend) }
                     }.pickerStyle(.radioGroup)
-                    if model.config.virtualDisplayBackend != .builtin {
+                    if model.config.virtualDisplayBackend == .betterdisplay {
                         LabeledContent("BetterDisplay 屏幕名称") {
                             TextField("可选", text: $model.config.virtualDisplayName)
                                 .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
