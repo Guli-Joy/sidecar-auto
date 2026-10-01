@@ -638,10 +638,13 @@ final class SetupModel: ObservableObject {
                       action: bluetooth.ok ? .refresh : .bluetooth,
                       actionTitle: bluetooth.ok ? "重新检查" : "申请 / 开启"),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
-                      // The local preference is useful progress, but macOS
-                      // offers no supported probe for the runtime daemon and
-                      // the iPad side is never observable from this app.
-                      state: handoff.ok ? .partial : .warning,
+                      // A positive result here means the Mac-side preference
+                      // is enabled.  The iPad switch is intentionally not a
+                      // required check: macOS exposes no supported API for
+                      // reading it remotely, so it must be called out in the
+                      // detail text without holding the setup progress at
+                      // 10/11.
+                      state: handoff.ok ? .good : .warning,
                       action: handoff.ok ? .refresh : .handoff,
                       actionTitle: handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
             CheckItem(id: "accessibility", title: "辅助功能权限", detail:
