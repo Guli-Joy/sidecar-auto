@@ -126,9 +126,17 @@ set_keyboard_shortcut() {
     # macOS release changes the private SQLite schema, importing the shortcuts
     # still succeeds and the user can enter the key in the detail panel.
     [ -r "$SHORTCUTS_DB" ] || return 1
-    workflow_id="$(/usr/bin/sqlite3 -readonly "$SHORTCUTS_DB" \
-        "SELECT ZWORKFLOWID FROM ZSHORTCUT WHERE ZTOMBSTONED=0 AND ZNAME IN ('$name','$slug') ORDER BY ZMODIFICATIONDATE DESC LIMIT 1;" \
-        2>/dev/null | tr -d '[:space:]')"
+    # Shortcuts.app publishes the name first and persists the workflow row a
+    # moment later.  Retry the UUID lookup so the automatic key assignment is
+    # not lost in that small import window.
+    workflow_id=""
+    for ((attempt = 0; attempt < 15; attempt++)); do
+        workflow_id="$(/usr/bin/sqlite3 -readonly "$SHORTCUTS_DB" \
+            "SELECT ZWORKFLOWID FROM ZSHORTCUT WHERE ZTOMBSTONED=0 AND ZNAME IN ('$name','$slug') ORDER BY ZMODIFICATIONDATE DESC LIMIT 1;" \
+            2>/dev/null | tr -d '[:space:]')"
+        [[ "$workflow_id" =~ ^[A-Fa-f0-9-]{36}$ ]] && break
+        sleep 1
+    done
     [[ "$workflow_id" =~ ^[A-Fa-f0-9-]{36}$ ]] || return 1
 
     plist="$STATE_DIR/pbs.$$.plist"
