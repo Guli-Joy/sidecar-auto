@@ -229,5 +229,5 @@ if ! install_one "断开 Sidecar" "$disconnect_command" disconnect-sidecar; then
     exit 1
 fi
 
-note "完成后可在快捷指令详情中分别设置键盘快捷键。"
+note "已尝试设置连接 ⌃⌥⌘S、断开 ⌃⌥⌘D；若详情页未显示，请在那里手动录入。"
 note "文件保存在：$STATE_DIR"

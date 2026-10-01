@@ -838,13 +838,38 @@ final class SetupModel: ObservableObject {
         let connect = names.contains("连接 Sidecar") || names.contains("connect-sidecar")
         let disconnect = names.contains("断开 Sidecar") || names.contains("disconnect-sidecar")
         if connect && disconnect {
-            return (true, "已找到连接和断开快捷指令；请在详情中分别设置 ⌃⌥⌘S / ⌃⌥⌘D")
+            let connectKey = shortcutKeyConfigured(names: ["连接 Sidecar", "connect-sidecar"], equivalent: "@~^s")
+            let disconnectKey = shortcutKeyConfigured(names: ["断开 Sidecar", "disconnect-sidecar"], equivalent: "@~^d")
+            if connectKey && disconnectKey {
+                return (true, "已找到连接和断开快捷指令；⌃⌥⌘S / ⌃⌥⌘D 已设置")
+            }
+            return (true, "已找到连接和断开快捷指令；快捷键尚未同时设置（建议 ⌃⌥⌘S / ⌃⌥⌘D）")
         }
         if connect || disconnect {
             let missing = connect ? "断开 Sidecar" : "连接 Sidecar"
             return (false, "已找到一个快捷指令，还缺少“\(missing)”；点击“一键配置快捷指令”继续")
         }
         return (false, "尚未创建“连接 Sidecar”和“断开 Sidecar”；点击“一键配置快捷指令”导入")
+    }
+
+    /// Read the same per-user service mapping that Shortcuts.app updates when
+    /// a keyboard shortcut is entered in its details panel. This is a local
+    /// hint only; if a future macOS release removes the SQLite/pbs entries,
+    /// the shortcut remains usable from the Shortcuts app itself.
+    private nonisolated static func shortcutKeyConfigured(names: [String], equivalent: String) -> Bool {
+        let database = "\(NSHomeDirectory())/Library/Shortcuts/Shortcuts.sqlite"
+        guard FileManager.default.isReadableFile(atPath: database) else { return false }
+        let escaped = names.map { $0.replacingOccurrences(of: "'", with: "''") }
+        let values = escaped.map { "'\($0)'" }.joined(separator: ",")
+        let query = "SELECT ZWORKFLOWID FROM ZSHORTCUT WHERE ZTOMBSTONED=0 AND ZNAME IN (\(values)) ORDER BY ZMODIFICATIONDATE DESC LIMIT 1;"
+        let workflowID = command("/usr/bin/sqlite3", ["-readonly", database, query], timeout: 2)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard workflowID.range(of: "^[A-Fa-f0-9-]{36}$", options: .regularExpression) != nil else {
+            return false
+        }
+        let preferences = command("/usr/bin/defaults", ["read", "pbs", "NSServicesStatus"], timeout: 2)
+        guard preferences.contains(workflowID) else { return false }
+        return preferences.contains("\"key_equivalent\" = \"\(equivalent)\";")
     }
 
     private nonisolated static func fileVaultStatus() ->
