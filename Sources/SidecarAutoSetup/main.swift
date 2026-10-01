@@ -1256,6 +1256,10 @@ final class SetupModel: ObservableObject {
             lowercased.contains("bluetooth power: on")
         let authorization: String
         let authorized: Bool
+        let bundlePath = Bundle.main.bundlePath
+        let locationHint = bundlePath.hasPrefix("/Applications/")
+            ? ""
+            : " 当前运行副本位于 \(NSString(string: bundlePath).abbreviatingWithTildeInPath)。"
         if #available(macOS 10.15, *) {
             // CoreBluetooth's class property can be stale when read from the
             // detached status worker immediately after returning from System
@@ -1273,7 +1277,7 @@ final class SetupModel: ObservableObject {
                 authorized = true
             case .denied:
                 authorization = bluetoothPermissionWasRequested()
-                    ? "当前运行副本未获得蓝牙授权；如果系统设置已打开开关，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能把它识别成新的 App。"
+                    ? "当前运行副本未获得蓝牙授权；如果系统设置已打开开关，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能把它识别成新的 App。\(locationHint)"
                     : "App 的蓝牙隐私授权已拒绝"
                 authorized = false
             case .restricted:
@@ -1281,7 +1285,7 @@ final class SetupModel: ObservableObject {
                 authorized = false
             case .notDetermined:
                 authorization = bluetoothPermissionWasRequested()
-                    ? "已经申请过蓝牙隐私授权；如果系统设置已为另一个副本开启，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能重新识别授权对象"
+                    ? "已经申请过蓝牙隐私授权；如果系统设置已为另一个副本开启，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能重新识别授权对象\(locationHint)"
                     : "尚未申请蓝牙隐私授权；只有点击“申请 / 开启”时才会由 macOS 显示确认"
                 authorized = false
             @unknown default:
