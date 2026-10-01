@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added a first-run configuration wizard, USB iPad scanning with automatic target
+  field filling, separate Mac/iPad readiness messaging, and live connection-stage
+  feedback in the manual test view.
+- Added safe USB detector regression tests to CI.
+
 - Prepared a clean public source distribution for Sidecar Auto.
 - Added the native SwiftUI `Sidecar Auto Setup.app` build, with a visual
   configuration guide, prebuilt runtime resources, status checks, and explicit

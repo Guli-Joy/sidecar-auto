@@ -39,6 +39,7 @@ Sidecar Auto 是一个面向 Mac 和 iPad 的一次性连接控制器。它在�
 ├── vendor/sidecarctl/             # 上游衍生的 Swift CLI（保留独立许可证）
 ├── launchd/                       # 登录后提示音 LaunchAgent 模板
 ├── config/                        # 配置示例
+├── tests/                          # 不连接真实设备的解析和回归测试
 └── docs/                          # 架构、排障和测试文档
 ```
 
@@ -238,7 +239,10 @@ launchctl bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.sidecarauto.log
 ```sh
 bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
 ./vendor/sidecarctl/build.sh --cli-only --build-only
+bash ./tests/test_usb_detector.sh
 ```
+
+测试脚本只使用伪造的 IORegistry 输出，不会连接、断开或修改真实 iPad。
 
 不要在 CI 中执行真实 Sidecar 连接；它会占用用户的显示器，需要解锁且可能弹出系统提示。请在报告中记录 macOS 版本、Mac 架构、USB/无线方式、是否有实体显示器和 iPad 是否解锁。
 

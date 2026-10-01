@@ -128,7 +128,10 @@ final class SetupModel: ObservableObject {
     @Published var installerLog = ""
     @Published var isOperating = false
     @Published var operationLog = ""
+    @Published var operationStage = ""
     @Published var isRequestingPermission = false
+    @Published var isScanningIPad = false
+    @Published var scanMessage = ""
 
     private let fileManager = FileManager.default
     private var bluetoothPermissionRequester: BluetoothPermissionRequester?
@@ -209,6 +212,50 @@ final class SetupModel: ObservableObject {
             refresh()
         } catch {
             message = "配置保存失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// Read the USB detector once and fill the target fields from its unique
+    /// match. The scan never starts Sidecar and never changes the config file
+    /// until the user presses “保存设置”.
+    func scanConnectedIPad() {
+        guard !isScanningIPad else { return }
+        let detector = "\(NSHomeDirectory())/.local/bin/sidecar-ipad-usb-detect.sh"
+        guard fileManager.isExecutableFile(atPath: detector) else {
+            scanMessage = "尚未安装检测程序，请先点击“安装 / 修复工具”。"
+            return
+        }
+        isScanningIPad = true
+        scanMessage = "正在扫描已连接的 iPad 数据设备……"
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.execute(executable: detector, arguments: [])
+        }
+        Task { @MainActor [weak self] in
+            let result = await worker.value
+            guard let self else { return }
+            self.isScanningIPad = false
+            let line = result.output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
+                .map(String.init).first(where: { $0.hasPrefix("USB_IPAD_MATCHED\t") })
+            if result.status == 0, let line {
+                let fields = line.split(separator: "\t", omittingEmptySubsequences: false).map(String.init)
+                let name = fields.dropFirst().first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                let serial = fields.dropFirst(2).first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !name.isEmpty else {
+                    self.scanMessage = "检测到了 USB 设备，但没有读取到 iPad 名称。请手动填写名称。"
+                    return
+                }
+                self.config.iPadName = name
+                self.config.usbSerial = serial
+                self.scanMessage = serial.isEmpty
+                    ? "已识别“\(name)”。请点击“保存设置”完成配置。"
+                    : "已识别“\(name)”（序列号已填入）。请点击“保存设置”完成配置。"
+            } else if result.output.contains("USB_IPAD_AMBIGUOUS") {
+                self.scanMessage = "检测到多台 iPad，请只保留目标 iPad，或手动填写 USB 序列号。"
+            } else if result.output.contains("USB_IPAD_NOT_FOUND") {
+                self.scanMessage = "没有检测到 iPad 数据线；可以直接配置名称并使用无线连接。"
+            } else {
+                self.scanMessage = "扫描失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无法读取 USB 状态" : result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+            }
         }
     }
 
@@ -383,10 +430,15 @@ final class SetupModel: ObservableObject {
         }
 
         isOperating = true
+        operationStage = startMessage
         operationLog = "\(startMessage)\n"
         message = startMessage
         let worker = Task.detached(priority: .userInitiated) {
             Self.execute(executable: executable, arguments: arguments)
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.monitorOperation(operationLabel: operationLabel)
         }
         Task { @MainActor [weak self] in
             let result = await worker.value
@@ -412,11 +464,35 @@ final class SetupModel: ObservableObject {
                 self.operationLog += "\n❌ \(operationLabel)失败（退出码 \(result.status)）\n"
             }
             self.isOperating = false
+            self.operationStage = result.status == 0 ? "操作完成" : "操作失败"
             self.message = result.status == 0
                 ? "\(operationLabel)完成；请确认 iPad 是否出现随航画面。"
                 : "\(operationLabel)失败（退出码 \(result.status)）；请查看输出和诊断。"
             self.refresh()
         }
+    }
+
+    private func monitorOperation(operationLabel: String) async {
+        while isOperating {
+            if let tail = sidecarDiagnosticTail(), !tail.isEmpty {
+                operationStage = Self.operationStage(from: tail, fallback: "正在执行\(operationLabel)…")
+            }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+        }
+    }
+
+    private nonisolated static func operationStage(from log: String, fallback: String) -> String {
+        let lower = log.lowercased()
+        if lower.contains("auto transport selected wired") { return "已检测到数据线，正在连接有线 Sidecar" }
+        if lower.contains("auto transport selected wireless") { return "未检测到数据线，正在准备无线 Sidecar" }
+        if lower.contains("wireless preflight") || lower.contains("bluetooth") { return "正在准备 Wi‑Fi、蓝牙和接力" }
+        if lower.contains("display topology") { return "正在等待显示拓扑稳定" }
+        if lower.contains("virtual display") || lower.contains("headless") || lower.contains("fallback") { return "正在创建并验证备用虚拟屏" }
+        if lower.contains("sidecar api request") || lower.contains("connect request") { return "正在请求 Sidecar 连接" }
+        if lower.contains("display online") || lower.contains("画面") { return "正在等待 iPad 画面上线" }
+        if lower.contains("set as main") || lower.contains("main-display") || lower.contains("main display") { return "正在将 iPad 设为主屏" }
+        if lower.contains("disconnect") { return "正在验证断开和屏幕恢复" }
+        return fallback
     }
 
     /// The shell controllers keep a durable log so a headless Mac can be
@@ -1193,6 +1269,8 @@ private enum SetupSection: String, CaseIterable, Identifiable {
 private struct SetupView: View {
     @StateObject private var model = SetupModel()
     @State private var section: SetupSection = .overview
+    @AppStorage("sidecarAutoSetupHasSeenWizard") private var hasSeenWizard = false
+    @State private var showingWizard = false
 
     var body: some View {
         NavigationSplitView {
@@ -1212,6 +1290,15 @@ private struct SetupView: View {
         .navigationSplitViewColumnWidth(min: 250, ideal: 270, max: 300)
         .tint(Color.sidecarBlue)
         .frame(minWidth: 900, minHeight: 700)
+        .sheet(isPresented: $showingWizard) {
+            SetupWizardView(model: model, section: $section) {
+                hasSeenWizard = true
+                showingWizard = false
+            }
+        }
+        .onAppear {
+            if !hasSeenWizard { showingWizard = true }
+        }
     }
 
     private var sidebar: some View {
@@ -1307,14 +1394,22 @@ private struct SetupView: View {
         let total = model.requiredCount
         let passed = model.goodCount
         return Panel {
-            PanelTitle(title: "当前状态", subtitle: "只读检查，不会自动连接 iPad；iPad 端开关需手动确认。", symbol: "checkmark.shield")
+            PanelTitle(title: "当前状态", subtitle: "Mac 本机检查与 iPad 端确认分开显示。", symbol: "checkmark.shield")
             HStack(alignment: .lastTextBaseline, spacing: 8) {
                 Text(total == 0 ? "—" : "\(passed)")
                     .font(.system(size: 38, weight: .bold, design: .rounded)).foregroundStyle(Color.sidecarBlue)
-                Text(total == 0 ? "正在检查" : "项已通过").foregroundStyle(.secondary)
+                Text(total == 0 ? "正在检查" : "项已通过（Mac）").foregroundStyle(.secondary)
             }
             ProgressView(value: total == 0 ? 0 : Double(passed) / Double(total)).tint(Color.sidecarBlue)
-            Text("未通过的项目会在“环境检查”中显示处理按钮。Mac 接力显示绿色时，仍请在 iPad 上确认“接力”已开启。").font(.caption).foregroundStyle(.secondary)
+            Divider()
+            VStack(alignment: .leading, spacing: 7) {
+                Label("Mac 本机", systemImage: passed == total && total > 0 ? "checkmark.circle.fill" : "circle.dashed")
+                    .foregroundStyle(passed == total && total > 0 ? .green : .secondary)
+                Label("iPad 端待确认", systemImage: "ipad")
+                    .foregroundStyle(.orange)
+                Text("请在 iPad：设置 → 通用 → 隔空播放与接力 → 开启“接力”，并保持 iPad 解锁。App 无法从 Mac 读取 iPad 端开关。")
+                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -1357,6 +1452,11 @@ private struct SetupView: View {
                 }
                 Button { section = .test } label: { Label("打开手动测试", systemImage: "play.circle") }
                     .buttonStyle(.bordered)
+                Button {
+                    hasSeenWizard = false
+                    showingWizard = true
+                } label: { Label("重新打开配置向导", systemImage: "wand.and.stars") }
+                    .buttonStyle(.bordered)
             }
         }
     }
@@ -1374,6 +1474,22 @@ private struct SetupView: View {
                     LabeledContent("USB 序列号") {
                         TextField("可选，用于多台 iPad 时精确匹配", text: $model.config.usbSerial)
                             .textFieldStyle(.roundedBorder).frame(maxWidth: 360)
+                    }
+                    HStack(spacing: 10) {
+                        Button {
+                            model.scanConnectedIPad()
+                        } label: {
+                            Label(model.isScanningIPad ? "扫描中…" : "扫描已连接 iPad",
+                                  systemImage: "magnifyingglass")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isScanningIPad || model.isInstalling || model.isOperating)
+                        if model.isScanningIPad { ProgressView().controlSize(.small) }
+                    }
+                    if !model.scanMessage.isEmpty {
+                        Label(model.scanMessage, systemImage: "info.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -1454,6 +1570,10 @@ private struct SetupView: View {
             PageIntro(text: "连接和断开只会在你点击按钮后执行一次。\(model.connectionPrerequisiteSummary) 测试时请确保 iPad 已解锁，并准备好接受 Sidecar。")
             Panel {
                 PanelTitle(title: "连接控制", subtitle: model.isOperating ? "正在执行，请稍候……" : "不会设置后台自动抢占。", symbol: "rectangle.connected.to.line.below")
+                if model.isOperating {
+                    Label(model.operationStage, systemImage: "arrow.triangle.2.circlepath")
+                        .font(.callout.weight(.semibold)).foregroundStyle(Color.sidecarBlue)
+                }
                 HStack(spacing: 12) {
                     Button { model.connect() } label: { Label("连接一次", systemImage: "rectangle.connected.to.line.below") }
                         .buttonStyle(.borderedProminent)
@@ -1483,6 +1603,121 @@ private struct SetupView: View {
             }
             .frame(minHeight: 90, maxHeight: 230)
             .background(Color.black.opacity(0.04), in: RoundedRectangle(cornerRadius: 9))
+        }
+    }
+}
+
+private struct SetupWizardView: View {
+    @ObservedObject var model: SetupModel
+    @Binding var section: SetupSection
+    let finish: () -> Void
+    @State private var step = 0
+
+    private let steps = ["选择 iPad", "准备无线条件", "配置快捷键", "完成测试"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 22) {
+            HStack {
+                AppMark(size: 48)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("首次配置 Sidecar Auto").font(.title2.bold())
+                    Text("完成一次设置后，日常只需按快捷键连接。")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            ProgressView(value: Double(step), total: Double(steps.count - 1))
+                .tint(Color.sidecarBlue)
+            Text("第 \(step + 1) 步：\(steps[step])")
+                .font(.headline)
+            wizardContent
+            Spacer(minLength: 4)
+            HStack {
+                Button("稍后配置") { finish() }
+                    .buttonStyle(.bordered)
+                Spacer()
+                if step > 0 {
+                    Button("上一步") { step -= 1 }
+                        .buttonStyle(.bordered)
+                }
+                if step < steps.count - 1 {
+                    Button("下一步") { step += 1 }
+                        .buttonStyle(.borderedProminent)
+                } else {
+                    Button("完成并进入概览") { finish() }
+                        .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .padding(30)
+        .frame(width: 620, height: 470)
+    }
+
+    @ViewBuilder private var wizardContent: some View {
+        switch step {
+        case 0:
+            VStack(alignment: .leading, spacing: 14) {
+                Text("先连接并解锁 iPad。连接 USB 数据线后点击扫描，助手会自动填写设备名称和序列号；也可以直接填写名称使用无线连接。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 10) {
+                    TextField("iPad 名称", text: $model.config.iPadName)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        model.scanConnectedIPad()
+                    } label: {
+                        Label(model.isScanningIPad ? "扫描中…" : "扫描 iPad", systemImage: "magnifyingglass")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(model.isScanningIPad || model.isInstalling || model.isOperating)
+                }
+                TextField("USB 序列号（可选）", text: $model.config.usbSerial)
+                    .textFieldStyle(.roundedBorder)
+                if !model.scanMessage.isEmpty {
+                    Text(model.scanMessage).font(.caption).foregroundStyle(.secondary)
+                }
+                Button("保存当前连接设置") { model.saveConfig() }
+                    .buttonStyle(.borderedProminent)
+            }
+        case 1:
+            VStack(alignment: .leading, spacing: 14) {
+                Label("Mac 侧准备", systemImage: model.bluetoothReady ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(model.bluetoothReady ? .green : .secondary)
+                Button(model.bluetoothReady ? "重新检查蓝牙" : "申请 / 开启蓝牙") {
+                    model.requestBluetoothAccess()
+                }
+                .buttonStyle(.borderedProminent)
+                Text("无线连接还需要两台设备都打开 Wi‑Fi、蓝牙和接力。Mac 的接力可以在环境检查中打开；iPad 端必须手动进入：设置 → 通用 → 隔空播放与接力 → 接力。此 App 无法从 Mac 读取 iPad 开关。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Label("有线连接不需要路由器，也不会因 iPad 端接力未确认而阻塞。", systemImage: "cable.connector")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        case 2:
+            VStack(alignment: .leading, spacing: 14) {
+                Text("助手会导入“连接 Sidecar”和“断开 Sidecar”两个快捷指令，并尝试设置 ⌃⌥⌘S / ⌃⌥⌘D。首次运行时，macOS 仍会要求你在有屏幕时点击允许。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("一键配置快捷指令") { model.perform(.installShortcuts) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isInstalling || model.isOperating)
+                if !model.installerLog.isEmpty {
+                    Text(model.message).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        default:
+            VStack(alignment: .leading, spacing: 14) {
+                Text("最后做一次手动测试。连接时会自动判断 USB 数据线；没有数据线时才准备无线连接。没有显示器时会按你的方案创建虚拟屏。")
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("打开手动测试") {
+                    section = .test
+                    finish()
+                }
+                    .buttonStyle(.borderedProminent)
+                Label("请保持 iPad 解锁。测试只执行一次，不会在后台自动重连。", systemImage: "info.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
     }
 }

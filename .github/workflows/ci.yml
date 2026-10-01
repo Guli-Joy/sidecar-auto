@@ -21,6 +21,10 @@ jobs:
             [ -f "$script" ] || continue
             bash -n "$script"
           done
+      - name: Run safe USB detector tests
+        run: |
+          set -euo pipefail
+          bash tests/test_usb_detector.sh
       - name: Build bundled helpers and CLI
         run: ./installer/install-sidecar-auto.sh --build-only
       - name: Build setup app bundle

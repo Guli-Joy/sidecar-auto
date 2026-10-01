@@ -9,6 +9,8 @@ CI 只做不会占用用户设备的检查：
 - `Sources/DisplayState/DisplayState.swift`、`Sources/BluetoothRadio/sidecar-bluetooth-radio.c` 和 `Sources/VirtualDisplay/sidecar-virtual-display.m` 的 macOS 构建；
 - SwiftUI 设置助手的 host-only App bundle 构建、资源树、Info.plist 和 Mach-O 检查；
 - plist 和发布目录检查。
+- USB iPad 检测器的唯一设备、无设备、多设备和序列号筛选测试；测试使用伪造
+  的 IORegistry 输出，不会接触真实 iPad。
 
 CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷指令。
 
@@ -16,6 +18,7 @@ CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷
 
 ```sh
 bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
+bash ./tests/test_usb_detector.sh
 ./installer/install-sidecar-auto.sh --build-only
 ./packaging/build-sidecar-auto-app.sh --host-only --output "$(mktemp -d)"
 ```
