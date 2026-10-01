@@ -244,11 +244,21 @@ final class SetupModel: ObservableObject {
                     self.scanMessage = "检测到了 USB 设备，但没有读取到 iPad 名称。请手动填写名称。"
                     return
                 }
-                self.config.iPadName = name
-                self.config.usbSerial = serial
+                // IORegistry exposes the USB product/registry name, not
+                // necessarily the friendly Sidecar name shown by macOS. Keep
+                // a custom target untouched; only replace the initial generic
+                // value when the USB name itself is the generic iPad label.
+                let currentName = self.config.iPadName.trimmingCharacters(in: .whitespacesAndNewlines)
+                if (currentName.isEmpty || currentName == "iPad") && name == "iPad" {
+                    self.config.iPadName = name
+                }
+                if !serial.isEmpty { self.config.usbSerial = serial }
+                let targetHint = currentName.isEmpty || currentName == "iPad"
+                    ? "请确认 iPad 名称与 macOS 显示一致"
+                    : "已保留你填写的 Sidecar 名称"
                 self.scanMessage = serial.isEmpty
-                    ? "已识别“\(name)”。请点击“保存设置”完成配置。"
-                    : "已识别“\(name)”（序列号已填入）。请点击“保存设置”完成配置。"
+                    ? "已识别 USB 设备“\(name)”；\(targetHint)，然后点击“保存设置”。"
+                    : "已识别 USB 设备“\(name)”并填入序列号；\(targetHint)，然后点击“保存设置”。"
             } else if result.output.contains("USB_IPAD_AMBIGUOUS") {
                 self.scanMessage = "检测到多台 iPad，请只保留目标 iPad，或手动填写 USB 序列号。"
             } else if result.output.contains("USB_IPAD_NOT_FOUND") {
@@ -1657,7 +1667,7 @@ private struct SetupWizardView: View {
         switch step {
         case 0:
             VStack(alignment: .leading, spacing: 14) {
-                Text("先连接并解锁 iPad。连接 USB 数据线后点击扫描，助手会自动填写设备名称和序列号；也可以直接填写名称使用无线连接。")
+                Text("先连接并解锁 iPad。连接 USB 数据线后点击扫描，助手会读取 USB 设备并自动填入序列号；Sidecar 名称仍请以 macOS 显示的名称为准，也可以直接填写名称使用无线连接。")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 10) {
