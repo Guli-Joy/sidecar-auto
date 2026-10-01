@@ -19,10 +19,10 @@ enum CheckState: Sendable {
     var color: Color {
         switch self {
         case .good: return .green
-        // The local Mac side is ready, but the companion device is not
-        // observable from this app. Keep this visually distinct from a fully
-        // verified check so the row can still communicate useful progress.
-        case .partial: return .orange
+        // The Mac-side switch is ready. The companion iPad cannot be queried
+        // remotely, so this is still labelled separately while using the
+        // same green treatment as a ready local prerequisite.
+        case .partial: return .green
         case .warning: return .orange
         case .action: return .blue
         case .unknown: return .secondary
@@ -151,7 +151,13 @@ final class SetupModel: ObservableObject {
     }
 
     var requiredCount: Int { checks.filter(\.required).count }
-    var goodCount: Int { checks.filter { $0.required && $0.state == .good }.count }
+    /// Count local prerequisites and locally-ready partial checks as passed.
+    /// For example, macOS exposes its Handoff preference but does not expose
+    /// the iPad's corresponding switch. That row is therefore marked
+    /// “Mac 已开启” while still contributing to the setup progress.
+    var goodCount: Int {
+        checks.filter { $0.required && ($0.state == .good || $0.state == .partial) }.count
+    }
 
     /// `true` only means that the local Mac radio and this app's Bluetooth
     /// privacy grant are ready.  It does not claim anything about the iPad.
@@ -800,9 +806,9 @@ final class SetupModel: ObservableObject {
         }
         let detail: String
         if macHint {
-            detail = "Mac 侧接力偏好已开启；App 无法验证 macOS 运行时或读取 iPad 状态。请在 iPad 上确认：设置 → 通用 → 隔空播放与接力 → 接力。Mac 路径：系统设置 → 通用 → 隔空投送与连续互通 → 开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”。"
+            detail = "Mac 接力已开启；请在 iPad 上也开启：设置 → 通用 → 隔空播放与接力 → 接力。App 无法读取 iPad 端开关，完成后即可使用无线随航。"
         } else {
-            detail = "Mac 侧接力偏好未同时开启或无法读取。请在 Mac：系统设置 → 通用 → 隔空投送与连续互通中开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；iPad：设置 → 通用 → 隔空播放与接力 → 接力。App 无法远程读取或修改 iPad 端开关。"
+            detail = "请在 Mac：系统设置 → 通用 → 隔空投送与连续互通中开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；然后在 iPad：设置 → 通用 → 隔空播放与接力 → 接力中开启。App 无法远程修改 iPad 端开关。"
         }
         return (macHint, detail)
     }
@@ -1152,7 +1158,7 @@ private struct SetupView: View {
                 AppMark(size: 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sidecar Auto").font(.headline)
-                    Text("设置助手").font(.caption).foregroundStyle(.secondary)
+                Text("无显示器连接助手").font(.caption).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 18).padding(.top, 24).padding(.bottom, 22)
@@ -1190,7 +1196,7 @@ private struct SetupView: View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(section.title).font(.title2.bold())
-                Text(section == .overview ? "让 Mac 在没有显示器时也能可靠连接 iPad。" : model.message)
+                Text(section == .overview ? "让没有显示器的 Mac mini 也能把 iPad 当主屏使用。" : model.message)
                     .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
@@ -1222,8 +1228,8 @@ private struct SetupView: View {
         HStack(spacing: 18) {
             AppMark(size: 68)
             VStack(alignment: .leading, spacing: 7) {
-                Text("把 iPad 变成你的第二块屏幕").font(.title.bold())
-                Text("先完成一次配置。之后只需按快捷键，Sidecar Auto 会根据数据线和网络状态选择合适的连接方式。")
+                Text("为 Mac mini 使用 iPad 作为主屏").font(.title.bold())
+                Text("专为无显示器使用场景设计。先完成一次配置，之后只需按快捷键，Sidecar Auto 会根据数据线和网络状态自动选择连接方式。")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
