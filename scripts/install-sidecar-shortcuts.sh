@@ -107,6 +107,11 @@ write_unsigned() {
   <key>WFWorkflowTypes</key>
   <array>
     <string>NCWidget</string>
+    <!-- QuickActions is the Shortcuts surface that owns service-menu and
+         keyboard-shortcut bindings.  Without this type, writing the
+         NSServicesStatus/pbs equivalent alone leaves the detail pane showing
+         “Add Keyboard Shortcut” and the shortcut never receives the key. -->
+    <string>QuickActions</string>
   </array>
 </dict>
 </plist>
