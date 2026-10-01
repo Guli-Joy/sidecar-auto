@@ -645,14 +645,10 @@ final class SetupModel: ObservableObject {
                       actionTitle: bluetooth.ok ? "重新检查" : "申请 / 开启"),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
                       // A positive result here means the Mac-side preference
-                      // is enabled.  The iPad switch is intentionally not a
-                      // required check: macOS exposes no supported API for
-                      // reading it remotely, so it must be called out in the
-                      // detail text without holding the setup progress at
-                      // 10/11.
-                      // Green means the Mac-side Handoff switch is enabled.
-                      // The iPad switch remains unobservable and is called
-                      // out in the detail text for the user to confirm.
+                      // is enabled. The iPad switch cannot be read remotely,
+                      // so it is called out in the detail text rather than
+                      // represented as a separate local check. This row still
+                      // counts the Mac-side prerequisite toward readiness.
                       state: handoff.ok ? .good : .warning,
                       action: handoff.ok ? .refresh : .handoff,
                       actionTitle: handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
