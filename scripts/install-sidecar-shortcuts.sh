@@ -99,19 +99,34 @@ write_unsigned() {
 EOF
 }
 
+shortcut_names() {
+    LC_ALL=C "$SHORTCUTS_BIN" list 2>/dev/null \
+        | sed '/^[[:space:]]*$/d; s/[[:space:]]*$//' \
+        || true
+}
+
 has_shortcut() {
-    local name="$1"
-    # `shortcuts list` prints one shortcut name per line.  Match the complete
-    # line so a similarly named shortcut does not suppress installation.
-    LC_ALL=C "$SHORTCUTS_BIN" list 2>/dev/null | grep -F -x -- "$name" >/dev/null
+    local name="$1" slug="$2"
+    # `shortcuts list` prints one shortcut name per line.  Match complete
+    # lines.  Older versions of this installer wrote the slug as the import
+    # filename, so macOS saved the shortcut as `connect-sidecar` instead of
+    # the user-facing Chinese name.  Treat that alias as installed too; this
+    # lets an upgrade continue with the missing disconnect shortcut instead of
+    # waiting forever for a rename that cannot happen automatically.
+    shortcut_names | grep -F -x -e "$name" -e "$slug" >/dev/null
 }
 
 install_one() {
     local name="$1" script="$2" slug="$3"
     local unsigned="$STATE_DIR/$slug.unsigned.shortcut"
-    local signed="$STATE_DIR/$slug.shortcut"
+    # Shortcuts.app derives the imported title from the filename.  Keep the
+    # signed file's basename equal to the visible shortcut name so a fresh
+    # import is shown as “连接 Sidecar” / “断开 Sidecar”, rather than the
+    # implementation slug.  The slug remains only for the private staging
+    # file and for backwards-compatible detection above.
+    local signed="$STATE_DIR/${name}.shortcut"
 
-    if has_shortcut "$name"; then
+    if has_shortcut "$name" "$slug"; then
         note "已存在“${name}”，跳过导入。"
         return 0
     fi
@@ -131,7 +146,7 @@ install_one() {
     # the flow hands-off while preserving Apple's explicit confirmation.
     local waited=0
     while [ "$waited" -lt 600 ]; do
-        if has_shortcut "$name"; then
+        if has_shortcut "$name" "$slug"; then
             note "“${name}”已添加。"
             return 0
         fi

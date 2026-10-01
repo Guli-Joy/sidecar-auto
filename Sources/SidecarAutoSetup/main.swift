@@ -14,7 +14,7 @@ struct SidecarAutoSetupApp: App {
 }
 
 enum CheckState: Sendable {
-    case good, partial, warning, action, unknown
+    case good, partial, warning, action, unknown, optional
 
     var color: Color {
         switch self {
@@ -26,6 +26,7 @@ enum CheckState: Sendable {
         case .warning: return .orange
         case .action: return .blue
         case .unknown: return .secondary
+        case .optional: return .secondary
         }
     }
 
@@ -36,6 +37,7 @@ enum CheckState: Sendable {
         case .warning: return "exclamationmark.triangle.fill"
         case .action: return "arrow.right.circle.fill"
         case .unknown: return "questionmark.circle"
+        case .optional: return "info.circle.fill"
         }
     }
 }
@@ -93,6 +95,19 @@ struct CheckItem: Identifiable, Sendable {
     let state: CheckState
     let action: CheckAction?
     let actionTitle: String?
+    /// Optional checks are shown for context but do not block Sidecar setup.
+    let required: Bool
+
+    init(id: String, title: String, detail: String, state: CheckState,
+         action: CheckAction?, actionTitle: String?, required: Bool = true) {
+        self.id = id
+        self.title = title
+        self.detail = detail
+        self.state = state
+        self.action = action
+        self.actionTitle = actionTitle
+        self.required = required
+    }
 }
 
 struct SetupConfig: Sendable {
@@ -135,7 +150,8 @@ final class SetupModel: ObservableObject {
         refresh()
     }
 
-    var goodCount: Int { checks.filter { $0.state == .good }.count }
+    var requiredCount: Int { checks.filter(\.required).count }
+    var goodCount: Int { checks.filter { $0.required && $0.state == .good }.count }
 
     /// `true` only means that the local Mac radio and this app's Bluetooth
     /// privacy grant are ready.  It does not claim anything about the iPad.
@@ -302,6 +318,7 @@ final class SetupModel: ObservableObject {
         runOperation(
             executable: "\(NSHomeDirectory())/.local/bin/sidecar-connect-once.sh",
             arguments: ["auto"],
+            operationLabel: "连接",
             startMessage: "正在执行一次 Sidecar 连接……"
         )
     }
@@ -313,14 +330,16 @@ final class SetupModel: ObservableObject {
         runOperation(
             executable: "\(NSHomeDirectory())/.local/bin/sidecar-disconnect-once.sh",
             arguments: [],
+            operationLabel: "断开",
             startMessage: "正在执行一次 Sidecar 断开……"
         )
     }
 
-    private func runOperation(executable: String, arguments: [String], startMessage: String) {
+    private func runOperation(executable: String, arguments: [String], operationLabel: String,
+                              startMessage: String) {
         guard !isOperating else { return }
         guard fileManager.isExecutableFile(atPath: executable) else {
-            operationLog = "找不到可执行文件：\(executable)\n请先点击“安装 / 修复”。"
+            operationLog = "❌ \(operationLabel)失败\n找不到可执行文件：\(executable)\n请先点击“安装 / 修复”。"
             message = "运行时工具尚未安装。"
             return
         }
@@ -334,13 +353,56 @@ final class SetupModel: ObservableObject {
         Task { @MainActor [weak self] in
             let result = await worker.value
             guard let self else { return }
-            self.operationLog += result.output
+            // The shell entry points intentionally write their detailed
+            // diagnostics to the shared log file and may not emit anything
+            // on stdout.  Previously the panel therefore stayed at the
+            // initial “正在执行……” line even after the process had
+            // finished.  Always append an explicit terminal record and keep
+            // captured stdout/stderr when a helper did return it.
+            let captured = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !captured.isEmpty {
+                self.operationLog += "\n\(captured)\n"
+            } else {
+                self.operationLog += "\n脚本未返回标准输出；详细诊断已写入 ~/Library/Logs/sidecar-auto.log。\n"
+            }
+            if let diagnosticTail = self.sidecarDiagnosticTail() {
+                self.operationLog += "\n最近的诊断日志：\n\(diagnosticTail)\n"
+            }
+            if result.status == 0 {
+                self.operationLog += "\n✅ \(operationLabel)成功（退出码 0）\n"
+            } else {
+                self.operationLog += "\n❌ \(operationLabel)失败（退出码 \(result.status)）\n"
+            }
             self.isOperating = false
             self.message = result.status == 0
-                ? "操作完成；请确认 iPad 是否出现随航画面。"
-                : "操作失败（退出码 \(result.status)）；请查看输出和诊断。"
+                ? "\(operationLabel)完成；请确认 iPad 是否出现随航画面。"
+                : "\(operationLabel)失败（退出码 \(result.status)）；请查看输出和诊断。"
             self.refresh()
         }
+    }
+
+    /// The shell controllers keep a durable log so a headless Mac can be
+    /// diagnosed after the app is closed. Include its tail in the manual-test
+    /// panel as well; otherwise a normal run has no stdout because the
+    /// controller deliberately captures its lower-level command output.
+    private func sidecarDiagnosticTail() -> String? {
+        let defaultURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Logs/sidecar-auto.log")
+        var url = defaultURL
+        let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/.config/sidecar-auto/config")
+        if let config = try? String(contentsOf: configURL, encoding: .utf8),
+           let line = config.split(separator: "\n").first(where: {
+               $0.trimmingCharacters(in: .whitespaces).hasPrefix("LOG_FILE=")
+           }) {
+            let raw = line.split(separator: "=", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+            let value = raw.trimmingCharacters(in: .whitespaces)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                .replacingOccurrences(of: "$HOME", with: NSHomeDirectory())
+            if !value.isEmpty { url = URL(fileURLWithPath: value) }
+        }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).suffix(60)
+        guard !lines.isEmpty else { return nil }
+        return lines.joined(separator: "\n")
     }
 
     /// Generate and import the two user-facing Shortcuts. macOS requires the
@@ -372,7 +434,7 @@ final class SetupModel: ObservableObject {
             self.installerLog += result.output
             self.isInstalling = false
             self.message = result.status == 0
-                ? "快捷指令导入流程已完成；可在快捷指令详情中设置键盘快捷键。"
+                ? "连接和断开快捷指令导入流程已完成；请在详情中录入 ⌃⌥⌘S / ⌃⌥⌘D。"
                 : "快捷指令导入失败（退出码 \(result.status)）；请查看日志。"
             self.refresh()
         }
@@ -584,9 +646,11 @@ final class SetupModel: ObservableObject {
                       action: shortcuts.ok ? .shortcuts : .installShortcuts,
                       actionTitle: shortcuts.ok ? "打开快捷指令" : "一键配置快捷指令"),
             CheckItem(id: "filevault", title: "文件保险箱（FileVault）", detail: fileVault.detail,
-                      state: fileVault.state, action: .fileVault, actionTitle: "查看文件保险箱"),
+                      state: fileVault.state, action: .fileVault, actionTitle: "查看文件保险箱",
+                      required: false),
             CheckItem(id: "autologin", title: "macOS 自动登录", detail: autoLogin.detail,
-                      state: autoLogin.state, action: .loginOptions, actionTitle: "查看自动登录选项")
+                      state: autoLogin.state, action: .loginOptions, actionTitle: "查看自动登录选项",
+                      required: false)
         ]
     }
 
@@ -767,45 +831,49 @@ final class SetupModel: ObservableObject {
         let output = command("/usr/bin/shortcuts", ["list"], timeout: 5)
         let names = Set(output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) })
-        let connect = names.contains("连接 Sidecar")
-        let disconnect = names.contains("断开 Sidecar")
+        // Releases before 0.2.2 accidentally imported the filename slug
+        // (`connect-sidecar`) as the shortcut title.  Count that legacy name
+        // as the connect action so an upgrade only imports the missing
+        // disconnect action and does not create a duplicate connection entry.
+        let connect = names.contains("连接 Sidecar") || names.contains("connect-sidecar")
+        let disconnect = names.contains("断开 Sidecar") || names.contains("disconnect-sidecar")
         if connect && disconnect {
-            return (true, "已找到“连接 Sidecar”和“断开 Sidecar”；可在快捷指令详情中设置键盘快捷键")
+            return (true, "已找到连接和断开快捷指令；请在详情中分别设置 ⌃⌥⌘S / ⌃⌥⌘D")
         }
         if connect || disconnect {
             let missing = connect ? "断开 Sidecar" : "连接 Sidecar"
-            return (false, "已找到一个快捷指令，还缺少“\(missing)”；点击“一键创建快捷指令”继续")
+            return (false, "已找到一个快捷指令，还缺少“\(missing)”；点击“一键配置快捷指令”继续")
         }
-        return (false, "尚未创建“连接 Sidecar”和“断开 Sidecar”；点击“一键创建快捷指令”导入")
+        return (false, "尚未创建“连接 Sidecar”和“断开 Sidecar”；点击“一键配置快捷指令”导入")
     }
 
     private nonisolated static func fileVaultStatus() ->
         (enabled: Bool, state: CheckState, detail: String) {
         let output = command("/usr/bin/fdesetup", ["status"]).trimmingCharacters(in: .whitespacesAndNewlines)
         if output.isEmpty {
-            return (false, .unknown,
-                    "无法读取文件保险箱状态；请打开系统设置确认。")
+            return (false, .optional,
+                    "可选安全设置：无法读取文件保险箱状态；需要时可打开系统设置确认。")
         }
         if output.localizedCaseInsensitiveContains("on") {
-            return (true, .warning,
-                    "文件保险箱已开启；冷启动必须先在解密界面输入密码。普通 App 无法代办，也不会保存或盲打密码。")
+            return (true, .optional,
+                    "可选安全设置：文件保险箱已开启；冷启动必须先在解密界面输入密码。普通 App 无法代办，也不会保存或盲打密码。")
         }
         if output.localizedCaseInsensitiveContains("off") {
-            return (false, .warning,
-                    "文件保险箱未开启；自动登录是否可用仍由 macOS 的登录选项和组织策略决定。关闭它会降低启动前保护。")
+            return (false, .optional,
+                    "可选安全设置：文件保险箱未开启；自动登录是否可用仍由 macOS 的登录选项和组织策略决定。关闭它会降低启动前保护。")
         }
-        return (false, .unknown,
-                "\(output)；冷启动登录仍由 macOS 安全策略控制。")
+        return (false, .optional,
+                "可选安全设置：\(output)；冷启动登录仍由 macOS 安全策略控制。")
     }
 
     private nonisolated static func autoLoginStatus(fileVaultEnabled: Bool) ->
         (state: CheckState, detail: String) {
         if fileVaultEnabled {
-            return (.warning,
-                    "文件保险箱开启时，macOS 会禁用自动登录。请先在“用户与群组”查看系统显示的状态；App 不会建议关闭启动保护。")
+            return (.optional,
+                    "可选安全设置：文件保险箱开启时，macOS 会禁用自动登录。请按需在“用户与群组”查看状态；App 不会建议关闭启动保护。")
         }
-        return (.unknown,
-                "自动登录由 macOS 的“用户与群组”设置、账户密码和组织策略决定；App 只能打开设置页，不能保存或输入密码。")
+        return (.optional,
+                "可选安全设置：自动登录由 macOS 的“用户与群组”设置、账户密码和组织策略决定；App 只能打开设置页，不能保存或输入密码。")
     }
 
     private struct ProcessResult: Sendable {
@@ -1025,7 +1093,7 @@ private struct SetupView: View {
     }
 
     private var sidebarStatus: some View {
-        let total = model.checks.count
+        let total = model.requiredCount
         let passed = model.goodCount
         return VStack(alignment: .leading, spacing: 10) {
             HStack {
@@ -1092,7 +1160,7 @@ private struct SetupView: View {
     }
 
     private var overviewStatusCard: some View {
-        let total = model.checks.count
+        let total = model.requiredCount
         let passed = model.goodCount
         return Panel {
             PanelTitle(title: "当前状态", subtitle: "只读检查，不会自动连接 iPad。", symbol: "checkmark.shield")
@@ -1245,7 +1313,7 @@ private struct SetupView: View {
                     if model.isOperating { ProgressView().controlSize(.small) }
                 }
             }
-            if !model.operationLog.isEmpty { logPanel(title: "最近一次连接输出", text: model.operationLog) }
+            if !model.operationLog.isEmpty { logPanel(title: "最近一次操作输出", text: model.operationLog) }
             if !model.installerLog.isEmpty { logPanel(title: "安装日志", text: model.installerLog) }
         }
     }
@@ -1365,6 +1433,7 @@ private struct StatusPill: View {
                 : state == .partial ? "Mac 已开启"
                 : state == .action ? "需要处理"
                 : state == .warning ? "注意"
+                : state == .optional ? "可选"
                 : "需确认"
         )
             .font(.caption2.weight(.semibold)).foregroundStyle(state.color)
