@@ -843,7 +843,14 @@ final class SetupModel: ObservableObject {
             if connectKey && disconnectKey {
                 return (true, "已找到连接和断开快捷指令；⌃⌥⌘S / ⌃⌥⌘D 已设置")
             }
-            return (true, "已找到连接和断开快捷指令；快捷键尚未同时设置（建议 ⌃⌥⌘S / ⌃⌥⌘D）")
+            // Keep this check actionable.  A shortcut can already be present
+            // while its workflow row or pbs mapping is still being persisted
+            // by Shortcuts.app.  Returning `ok=true` here made the UI show
+            // only “打开快捷指令”, leaving no way to retry the automatic key
+            // assignment after that short race.  Mark it as needing action so
+            // the existing one-click installer is offered again; the helper
+            // is idempotent and will skip importing the two existing entries.
+            return (false, "已找到连接和断开快捷指令，但快捷键尚未设置；点击“一键配置快捷指令”自动重试 ⌃⌥⌘S / ⌃⌥⌘D")
         }
         if connect || disconnect {
             let missing = connect ? "断开 Sidecar" : "连接 Sidecar"
