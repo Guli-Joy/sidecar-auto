@@ -16,6 +16,10 @@
   non-prompting manager callback check when macOS has not refreshed the cached
   result. The optional diagnostics section now keeps only the shortcut status,
   combined startup-security rows, BetterDisplay inspection and login notice.
+- When a user has already opened Bluetooth settings, returning to the app now
+  performs one explicit synchronization probe. This handles the macOS state
+  where the System Settings switch is on but CoreBluetooth still reports
+  notDetermined; startup and ordinary refreshes still never create a manager.
 
 - Added a read-only BetterDisplay inspection panel, cancellable manual operations
   with live diagnostic-tail updates. Cancellation now terminates the active

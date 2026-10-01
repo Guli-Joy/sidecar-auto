@@ -262,6 +262,7 @@ final class SetupModel: ObservableObject {
     private let fileManager = FileManager.default
     private var bluetoothPermissionRequester: BluetoothPermissionRequester?
     private var bluetoothStatusProbe: BluetoothStatusProbe?
+    private var shouldProbeBluetoothAfterSettings = false
     private var activeObserver: NSObjectProtocol?
     private var operationLogStartOffset: UInt64 = 0
 
@@ -331,14 +332,10 @@ final class SetupModel: ObservableObject {
     }
 
     private func probeBluetoothIfNeeded() {
-        // A marker means the user has already seen the prompt. If the class
-        // property is stale after returning from System Settings, probe a
-        // decided grant as well; never create a manager for a genuinely
-        // not-determined state.
         guard bluetoothStatusProbe == nil,
-              Self.bluetoothPermissionWasRequested(),
-              checks.first(where: { $0.id == "bluetooth" })?.detail.contains("已拒绝") == true
+              shouldProbeBluetoothAfterSettings
         else { return }
+        shouldProbeBluetoothAfterSettings = false
         bluetoothStatusProbe = BluetoothStatusProbe { [weak self] state in
             Task { @MainActor [weak self] in
                 self?.applyBluetoothProbe(state)
@@ -347,11 +344,11 @@ final class SetupModel: ObservableObject {
     }
 
     private func applyBluetoothProbe(_ state: CBManagerState) {
-        defer { bluetoothStatusProbe = nil }
         guard let index = checks.firstIndex(where: { $0.id == "bluetooth" }) else { return }
         let current = checks[index]
         switch state {
         case .poweredOn:
+            bluetoothStatusProbe = nil
             checks[index] = CheckItem(
                 id: current.id, title: current.title,
                 detail: "Mac 蓝牙无线电已开启；App 的蓝牙隐私授权已允许（系统设置已同步）。",
@@ -359,7 +356,14 @@ final class SetupModel: ObservableObject {
             )
             message = "蓝牙权限已同步，环境状态已更新。"
         case .unauthorized:
-            break
+            bluetoothStatusProbe = nil
+            message = "系统设置仍未向当前 App 副本授予蓝牙权限；请确认开关对应的是正在运行的 Sidecar Auto Setup.app。"
+        case .poweredOff:
+            bluetoothStatusProbe = nil
+            message = "蓝牙权限已确认，但 Mac 蓝牙无线电仍处于关闭状态。"
+        case .unsupported:
+            bluetoothStatusProbe = nil
+            message = "当前 Mac 不支持蓝牙无线连接。"
         default:
             break
         }
@@ -556,6 +560,7 @@ final class SetupModel: ObservableObject {
             switch CBManager.authorization {
             case .notDetermined:
                 if Self.bluetoothPermissionWasRequested() {
+                    shouldProbeBluetoothAfterSettings = true
                     openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
                     message = "此 App 已经向 macOS 申请过蓝牙权限。请在系统设置中确认 Sidecar Auto 的开关；不会重复弹出申请窗口。"
                     return
@@ -570,6 +575,7 @@ final class SetupModel: ObservableObject {
                 }
                 return
             case .denied, .restricted:
+                shouldProbeBluetoothAfterSettings = true
                 openSettings("x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth")
                 message = "蓝牙权限已被系统拒绝，请在系统设置中打开 Sidecar Auto；返回后会自动重新检查。"
                 return
@@ -1266,14 +1272,16 @@ final class SetupModel: ObservableObject {
                 authorization = "App 的蓝牙隐私授权已允许"
                 authorized = true
             case .denied:
-                authorization = "App 的蓝牙隐私授权已拒绝"
+                authorization = bluetoothPermissionWasRequested()
+                    ? "当前运行副本未获得蓝牙授权；如果系统设置已打开开关，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能把它识别成新的 App。"
+                    : "App 的蓝牙隐私授权已拒绝"
                 authorized = false
             case .restricted:
                 authorization = "App 的蓝牙隐私授权受到系统限制"
                 authorized = false
             case .notDetermined:
                 authorization = bluetoothPermissionWasRequested()
-                    ? "已经申请过蓝牙隐私授权；请在系统设置确认开关，不会在打开 App 时重复申请"
+                    ? "已经申请过蓝牙隐私授权；如果系统设置已为另一个副本开启，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能重新识别授权对象"
                     : "尚未申请蓝牙隐私授权；只有点击“申请 / 开启”时才会由 macOS 显示确认"
                 authorized = false
             @unknown default:
