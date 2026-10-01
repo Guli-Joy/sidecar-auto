@@ -18,11 +18,11 @@ UUIDGEN_BIN="/usr/bin/uuidgen"
 SHORTCUTS_DB="$HOME/Library/Shortcuts/Shortcuts.sqlite"
 
 write_key_status() {
-    local slug="$1" equivalent="$2" configured="$3"
+    local slug="$1" equivalent="$2" configured="$3" workflow_id="${4:-${SHORTCUT_WORKFLOW_ID:-}}"
     local status_file="$STATE_DIR/${slug}.key-status"
     local temporary="${status_file}.$$"
     cat >"$temporary" <<EOF
-workflow_id=${SHORTCUT_WORKFLOW_ID:-}
+workflow_id=${workflow_id}
 equivalent=${equivalent}
 configured=${configured}
 EOF
@@ -135,8 +135,8 @@ has_shortcut() {
     shortcut_names | grep -F -x -e "$name" -e "$slug" >/dev/null
 }
 
-set_keyboard_shortcut() {
-    local name="$1" slug="$2" equivalent="$3" workflow_id service_key plist
+resolve_workflow_id() {
+    local name="$1" slug="$2" workflow_id
     SHORTCUT_WORKFLOW_ID=""
     # Shortcuts stores the optional service keyboard equivalent in the
     # per-user `pbs` preferences domain.  There is no public Shortcuts CLI for
@@ -158,24 +158,50 @@ set_keyboard_shortcut() {
     done
     [[ "$workflow_id" =~ ^[A-Fa-f0-9-]{36}$ ]] || return 1
     SHORTCUT_WORKFLOW_ID="$workflow_id"
+    return 0
+}
+
+remember_workflow_id() {
+    local name="$1" slug="$2"
+    resolve_workflow_id "$name" "$slug" || return 1
+    if [ "$name" = "连接 Sidecar" ]; then
+        CONNECT_WORKFLOW_ID="$SHORTCUT_WORKFLOW_ID"
+    else
+        DISCONNECT_WORKFLOW_ID="$SHORTCUT_WORKFLOW_ID"
+    fi
+}
+
+set_keyboard_shortcuts_batch() {
+    local connect_id="$1" disconnect_id="$2" plist service_key
+    [[ "$connect_id" =~ ^[A-Fa-f0-9-]{36}$ ]] || return 1
+    [[ "$disconnect_id" =~ ^[A-Fa-f0-9-]{36}$ ]] || return 1
 
     plist="$STATE_DIR/pbs.$$.plist"
     if ! /usr/bin/defaults export pbs "$plist" >/dev/null 2>&1; then
         return 1
     fi
-    service_key="(null) - ${workflow_id} - runShortcutAsService"
-    # plutil's key-path syntax accepts the literal service key (including
-    # spaces and parentheses).  Insert a new dictionary for first-time
-    # imports, or replace only the equivalent when the entry already exists.
-    if ! /usr/bin/plutil -insert "NSServicesStatus.${service_key}" \
-        -xml "<dict><key>key_equivalent</key><string>${equivalent}</string></dict>" \
-        "$plist" >/dev/null 2>&1; then
-        /usr/bin/plutil -replace "NSServicesStatus.${service_key}.key_equivalent" \
-            -string "$equivalent" "$plist" >/dev/null 2>&1 || {
-            rm -f "$plist"
-            return 1
-        }
-    fi
+    # Modify one exported preference file and import it once.  Calling
+    # `defaults import pbs` separately for each shortcut races with cfprefsd
+    # and the second import can replace the first service mapping.  Keep both
+    # entries in the same plist transaction instead.
+    for mapping in \
+        "${connect_id}:@~^s" \
+        "${disconnect_id}:@~^d"; do
+        local workflow_id="${mapping%%:*}" equivalent="${mapping#*:}"
+        service_key="(null) - ${workflow_id} - runShortcutAsService"
+        # plutil's key-path syntax accepts the literal service key (including
+        # spaces and parentheses).  Insert a new dictionary for first-time
+        # imports, or replace only the equivalent when the entry already exists.
+        if ! /usr/bin/plutil -insert "NSServicesStatus.${service_key}" \
+            -xml "<dict><key>key_equivalent</key><string>${equivalent}</string></dict>" \
+            "$plist" >/dev/null 2>&1; then
+            /usr/bin/plutil -replace "NSServicesStatus.${service_key}.key_equivalent" \
+                -string "$equivalent" "$plist" >/dev/null 2>&1 || {
+                rm -f "$plist"
+                return 1
+            }
+        fi
+    done
     if ! /usr/bin/defaults import pbs "$plist" >/dev/null 2>&1; then
         rm -f "$plist"
         return 1
@@ -196,19 +222,7 @@ install_one() {
 
     if has_shortcut "$name" "$slug"; then
         note "已存在“${name}”，跳过导入。"
-        local hotkey
-        if [ "$name" = "连接 Sidecar" ]; then
-            hotkey='@~^s'
-        else
-            hotkey='@~^d'
-        fi
-        if set_keyboard_shortcut "$name" "$slug" "$hotkey"; then
-            write_key_status "$slug" "$hotkey" 1
-            note "已尝试设置“${name}”键盘快捷键。"
-        else
-            write_key_status "$slug" "$hotkey" 0
-            note "无法自动设置“${name}”键盘快捷键；请在快捷指令详情中录入建议组合键。"
-        fi
+        remember_workflow_id "$name" "$slug" || true
         return 0
     fi
 
@@ -229,19 +243,7 @@ install_one() {
     while [ "$waited" -lt 600 ]; do
         if has_shortcut "$name" "$slug"; then
             note "“${name}”已添加。"
-            local hotkey
-            if [ "$name" = "连接 Sidecar" ]; then
-                hotkey='@~^s'
-            else
-                hotkey='@~^d'
-            fi
-            if set_keyboard_shortcut "$name" "$slug" "$hotkey"; then
-                write_key_status "$slug" "$hotkey" 1
-                note "已尝试设置“${name}”键盘快捷键。"
-            else
-                write_key_status "$slug" "$hotkey" 0
-                note "无法自动设置“${name}”键盘快捷键；请在快捷指令详情中录入建议组合键。"
-            fi
+            remember_workflow_id "$name" "$slug" || true
             return 0
         fi
         sleep 1
@@ -253,12 +255,31 @@ install_one() {
 
 connect_command='exec "$HOME/.local/bin/sidecar-connect-once.sh" auto'
 disconnect_command='exec "$HOME/.local/bin/sidecar-disconnect-once.sh"'
+CONNECT_WORKFLOW_ID=""
+DISCONNECT_WORKFLOW_ID=""
 
 if ! install_one "连接 Sidecar" "$connect_command" connect-sidecar; then
     exit 1
 fi
 if ! install_one "断开 Sidecar" "$disconnect_command" disconnect-sidecar; then
     exit 1
+fi
+
+# Assign both service shortcuts in one defaults transaction.  Importing the
+# pbs preference once per shortcut is racy and can make the second mapping
+# replace the first.  Only mark the status files configured after both entries
+# have been persisted successfully.
+connect_workflow_id="${CONNECT_WORKFLOW_ID:-}"
+disconnect_workflow_id="${DISCONNECT_WORKFLOW_ID:-}"
+if [ -n "$connect_workflow_id" ] && [ -n "$disconnect_workflow_id" ] \
+   && set_keyboard_shortcuts_batch "$connect_workflow_id" "$disconnect_workflow_id"; then
+    write_key_status connect-sidecar '@~^s' 1 "$connect_workflow_id"
+    write_key_status disconnect-sidecar '@~^d' 1 "$disconnect_workflow_id"
+    note '已在同一次系统偏好写入中设置连接 ⌃⌥⌘S、断开 ⌃⌥⌘D。'
+else
+    write_key_status connect-sidecar '@~^s' 0 "$connect_workflow_id"
+    write_key_status disconnect-sidecar '@~^d' 0 "$disconnect_workflow_id"
+    note '无法自动设置两个快捷键；请在快捷指令详情中录入建议组合键。'
 fi
 
 note "已尝试设置连接 ⌃⌥⌘S、断开 ⌃⌥⌘D；若详情页未显示，请在那里手动录入。"
