@@ -14,11 +14,15 @@ struct SidecarAutoSetupApp: App {
 }
 
 enum CheckState: Sendable {
-    case good, warning, action, unknown
+    case good, partial, warning, action, unknown
 
     var color: Color {
         switch self {
         case .good: return .green
+        // The local Mac side is ready, but the companion device is not
+        // observable from this app. Keep this visually distinct from a fully
+        // verified check so the row can still communicate useful progress.
+        case .partial: return .orange
         case .warning: return .orange
         case .action: return .blue
         case .unknown: return .secondary
@@ -28,6 +32,7 @@ enum CheckState: Sendable {
     var symbol: String {
         switch self {
         case .good: return "checkmark.circle.fill"
+        case .partial: return "checkmark.circle.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .action: return "arrow.right.circle.fill"
         case .unknown: return "questionmark.circle"
@@ -131,6 +136,12 @@ final class SetupModel: ObservableObject {
     }
 
     var goodCount: Int { checks.filter { $0.state == .good }.count }
+
+    /// `true` only means that the local Mac radio and this app's Bluetooth
+    /// privacy grant are ready.  It does not claim anything about the iPad.
+    var bluetoothReady: Bool {
+        checks.first(where: { $0.id == "bluetooth" })?.state == .good
+    }
 
     func refresh() {
         guard !isRefreshing else { return }
@@ -546,15 +557,16 @@ final class SetupModel: ObservableObject {
             CheckItem(id: "wifi", title: "Wi-Fi", detail: wifi.detail,
                       state: wifi.ok ? .good : .warning, action: .refresh, actionTitle: "重新检查"),
             CheckItem(id: "bluetooth", title: "蓝牙", detail: bluetooth.detail,
-                      state: bluetooth.ok ? .good : .action, action: .bluetooth, actionTitle: "申请 / 开启"),
+                      state: bluetooth.ok ? .good : .action,
+                      action: bluetooth.ok ? .refresh : .bluetooth,
+                      actionTitle: bluetooth.ok ? "重新检查" : "申请 / 开启"),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
-                      // The Mac preference values are only a hint; macOS does
-                      // not expose a supported runtime probe and the iPad side
-                      // is never observable from this app. Keep a confirmed
-                      // Mac preference in the neutral state rather than
-                      // claiming that wireless Sidecar is ready.
-                      state: handoff.ok ? .unknown : .warning,
-                      action: .handoff, actionTitle: "打开 Mac 接力设置"),
+                      // The local preference is useful progress, but macOS
+                      // offers no supported probe for the runtime daemon and
+                      // the iPad side is never observable from this app.
+                      state: handoff.ok ? .partial : .warning,
+                      action: handoff.ok ? .refresh : .handoff,
+                      actionTitle: handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
             CheckItem(id: "accessibility", title: "辅助功能权限", detail:
                       "当前连接路径不需要辅助功能权限；只有启用需要 UI 自动化的可选功能时才需要手动授权。",
                       state: .good, action: nil, actionTitle: nil),
@@ -697,10 +709,13 @@ final class SetupModel: ObservableObject {
         let macHint = [advertising, receiving].allSatisfy {
             ["1", "true", "yes", "on"].contains($0.lowercased())
         }
-        let macText = macHint
-            ? "Mac 侧接力偏好已开启（运行时仍需 macOS 自己确认）"
-            : "Mac 侧接力偏好未同时开启或无法读取"
-        return (macHint, "\(macText)。请确认两端都已开启接力。Mac：系统设置 → 通用 → 隔空投送与连续互通（旧版叫“隔空投送与接力”）→ 开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；iPad：设置 → 通用 → 隔空播放与接力 → 接力。App 无法远程读取或修改 iPad 端开关")
+        let detail: String
+        if macHint {
+            detail = "Mac 侧接力偏好已开启；App 无法验证 macOS 运行时或读取 iPad 状态。请在 iPad 上确认：设置 → 通用 → 隔空播放与接力 → 接力。Mac 路径：系统设置 → 通用 → 隔空投送与连续互通 → 开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”。"
+        } else {
+            detail = "Mac 侧接力偏好未同时开启或无法读取。请在 Mac：系统设置 → 通用 → 隔空投送与连续互通中开启“允许在这台 Mac 和 iCloud 设备之间使用‘接力’”；iPad：设置 → 通用 → 隔空播放与接力 → 接力。App 无法远程读取或修改 iPad 端开关。"
+        }
+        return (macHint, detail)
     }
 
     private nonisolated static func betterDisplayStatus(backend: VirtualDisplayBackend = .auto) -> (ok: Bool, detail: String) {
@@ -1182,14 +1197,25 @@ private struct SetupView: View {
             Panel {
                 PanelTitle(title: "权限助手", subtitle: "只申请连接真正需要的权限。", symbol: "hand.raised.fill")
                 HStack(spacing: 12) {
-                    Text("当前连接路径只需要蓝牙隐私授权。辅助功能和屏幕录制对本项目不是必需项，BetterDisplay 如有额外要求会由它自己申请。")
+                    Text(model.bluetoothReady
+                         ? "蓝牙无线电已开启，Sidecar Auto 已获得蓝牙隐私授权。点击“重新检查蓝牙”可再次读取状态。辅助功能和屏幕录制对本项目不是必需项。"
+                         : "当前连接路径只需要蓝牙隐私授权。辅助功能和屏幕录制对本项目不是必需项，BetterDisplay 如有额外要求会由它自己申请。")
                         .font(.callout).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     Button {
-                        model.requestBluetoothAccess()
+                        if model.bluetoothReady {
+                            model.refresh()
+                        } else {
+                            model.requestBluetoothAccess()
+                        }
                     } label: {
-                        Label(model.isRequestingPermission ? "申请中…" : "申请 / 开启蓝牙", systemImage: "dot.radiowaves.left.and.right")
+                        Label(
+                            model.isRequestingPermission
+                                ? "申请中…"
+                                : model.bluetoothReady ? "重新检查蓝牙" : "申请 / 开启蓝牙",
+                            systemImage: "dot.radiowaves.left.and.right"
+                        )
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(model.isRequestingPermission || model.isInstalling || model.isOperating)
@@ -1334,7 +1360,13 @@ private struct CheckRow: View {
 private struct StatusPill: View {
     let state: CheckState
     var body: some View {
-        Text(state == .good ? "正常" : state == .action ? "需要处理" : state == .warning ? "注意" : "需确认")
+        Text(
+            state == .good ? "正常"
+                : state == .partial ? "Mac 已开启"
+                : state == .action ? "需要处理"
+                : state == .warning ? "注意"
+                : "需确认"
+        )
             .font(.caption2.weight(.semibold)).foregroundStyle(state.color)
             .padding(.horizontal, 6).padding(.vertical, 2).background(state.color.opacity(0.12), in: Capsule())
     }
