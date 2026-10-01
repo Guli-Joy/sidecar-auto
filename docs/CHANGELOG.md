@@ -3,8 +3,10 @@
 ## Unreleased
 
 - Added a read-only BetterDisplay inspection panel, cancellable manual operations
-  with live diagnostic-tail updates, and a repeatable signed release script for
-  notarized DMG production.
+  with live diagnostic-tail updates. Cancellation now terminates the active
+  controller's child processes and the log view is scoped to the current run;
+  the UI no longer reports a cancelled operation as a success. Added a repeatable
+  signed release script for notarized DMG production.
 
 - Added a first-run configuration wizard, USB iPad scanning with automatic target
   field filling, separate Mac/iPad readiness messaging, and live connection-stage

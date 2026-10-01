@@ -139,6 +139,7 @@ final class SetupModel: ObservableObject {
     private let fileManager = FileManager.default
     private var bluetoothPermissionRequester: BluetoothPermissionRequester?
     private var activeObserver: NSObjectProtocol?
+    private var operationLogStartOffset: UInt64 = 0
 
     init() {
         config = readConfig()
@@ -298,10 +299,10 @@ final class SetupModel: ObservableObject {
             operationLog += "\n⚠️ 找不到当前操作进程；脚本会在当前阶段结束后停止。\n"
             return
         }
-        let killer = Process()
-        killer.executableURL = URL(fileURLWithPath: "/bin/kill")
-        killer.arguments = ["-TERM", String(pid)]
-        try? killer.run()
+        operationLog += "\n正在停止连接脚本和它启动的子进程…\n"
+        Task.detached(priority: .userInitiated) {
+            Self.terminateProcessTree(rootPID: pid)
+        }
     }
 
     func perform(_ action: CheckAction) {
@@ -476,6 +477,7 @@ final class SetupModel: ObservableObject {
 
         isOperating = true
         isCancelRequested = false
+        operationLogStartOffset = Self.sidecarLogFileSize()
         operationStage = startMessage
         operationLog = "\(startMessage)\n"
         message = startMessage
@@ -505,7 +507,9 @@ final class SetupModel: ObservableObject {
             if let diagnosticTail = self.sidecarDiagnosticTail() {
                 self.operationLog += "\n最近的诊断日志：\n\(diagnosticTail)\n"
             }
-            if result.status == 0 {
+            if self.isCancelRequested {
+                self.operationLog += "\n⚠️ \(operationLabel)已取消（进程退出码 \(result.status)）\n"
+            } else if result.status == 0 {
                 self.operationLog += "\n✅ \(operationLabel)成功（退出码 0）\n"
             } else {
                 self.operationLog += "\n❌ \(operationLabel)失败（退出码 \(result.status)）\n"
@@ -550,8 +554,23 @@ final class SetupModel: ObservableObject {
     /// panel as well; otherwise a normal run has no stdout because the
     /// controller deliberately captures its lower-level command output.
     private func sidecarDiagnosticTail() -> String? {
+        let url = Self.sidecarLogURL()
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        let endOffset = (try? handle.seekToEnd()) ?? 0
+        guard endOffset > 0 else { return nil }
+        let configuredOffset = operationLogStartOffset > endOffset ? 0 : operationLogStartOffset
+        let readOffset = max(configuredOffset, endOffset > 262_144 ? endOffset - 262_144 : 0)
+        guard (try? handle.seek(toOffset: readOffset)) != nil,
+              let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).suffix(60)
+        guard !lines.isEmpty else { return nil }
+        return lines.joined(separator: "\n")
+    }
+
+    private nonisolated static func sidecarLogURL() -> URL {
         let defaultURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Logs/sidecar-auto.log")
-        var url = defaultURL
         let configURL = URL(fileURLWithPath: "\(NSHomeDirectory())/.config/sidecar-auto/config")
         if let config = try? String(contentsOf: configURL, encoding: .utf8),
            let line = config.split(separator: "\n").first(where: {
@@ -561,12 +580,64 @@ final class SetupModel: ObservableObject {
             let value = raw.trimmingCharacters(in: .whitespaces)
                 .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
                 .replacingOccurrences(of: "$HOME", with: NSHomeDirectory())
-            if !value.isEmpty { url = URL(fileURLWithPath: value) }
+            if !value.isEmpty { return URL(fileURLWithPath: value) }
         }
-        guard let text = try? String(contentsOf: url, encoding: .utf8) else { return nil }
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: true).suffix(60)
-        guard !lines.isEmpty else { return nil }
-        return lines.joined(separator: "\n")
+        return defaultURL
+    }
+
+    private nonisolated static func sidecarLogFileSize() -> UInt64 {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: sidecarLogURL().path)
+        return (attributes?[.size] as? NSNumber)?.uint64Value ?? 0
+    }
+
+    /// Stop the action and helper processes started beneath its shell entry
+    /// point. Terminating only the top-level shell can leave a waiting `say`,
+    /// display helper, or Sidecar request running after the UI says cancelled.
+    private nonisolated static func terminateProcessTree(rootPID: Int32) {
+        let ps = Process()
+        let outputPipe = Pipe()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-axo", "pid=,ppid="]
+        ps.standardOutput = outputPipe
+        ps.standardError = FileHandle.nullDevice
+        guard (try? ps.run()) != nil else {
+            signalProcesses([rootPID])
+            return
+        }
+        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+
+        var children: [Int32: [Int32]] = [:]
+        if let rows = String(data: data, encoding: .utf8) {
+            for row in rows.split(separator: "\n") {
+                let fields = row.split(whereSeparator: \.isWhitespace)
+                guard fields.count == 2,
+                      let pid = Int32(fields[0]), let parent = Int32(fields[1]) else { continue }
+                children[parent, default: []].append(pid)
+            }
+        }
+        var ordered: [Int32] = []
+        var visited: Set<Int32> = [rootPID]
+        func collect(_ parent: Int32) {
+            for child in children[parent, default: []] where visited.insert(child).inserted {
+                collect(child)
+                ordered.append(child)
+            }
+        }
+        collect(rootPID)
+        ordered.append(rootPID)
+        signalProcesses(ordered)
+    }
+
+    private nonisolated static func signalProcesses(_ pids: [Int32]) {
+        guard !pids.isEmpty else { return }
+        let killer = Process()
+        killer.executableURL = URL(fileURLWithPath: "/bin/kill")
+        killer.arguments = ["-TERM"] + pids.map(String.init)
+        killer.standardOutput = FileHandle.nullDevice
+        killer.standardError = FileHandle.nullDevice
+        try? killer.run()
+        killer.waitUntilExit()
     }
 
     /// Generate and import the two user-facing Shortcuts. macOS requires the
