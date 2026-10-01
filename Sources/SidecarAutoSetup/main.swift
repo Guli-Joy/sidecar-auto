@@ -206,12 +206,27 @@ final class SetupModel: ObservableObject {
                 NSWorkspace.shared.open(URL(string: "https://github.com/waydabber/BetterDisplay")!)
             }
         case .shortcuts:
-            let appURL = URL(fileURLWithPath: "/System/Applications/Shortcuts.app")
-            if fileManager.fileExists(atPath: appURL.path) {
-                NSWorkspace.shared.open(appURL)
-            } else {
-                NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Shortcuts.app"))
+            // Deep-link to the connection shortcut when possible so the user
+            // can press Run and answer Shortcuts' one-time Shell Script
+            // consent. The app never invokes `shortcuts run` itself because
+            // that would start a real Sidecar connection during a probe.
+            var openedShortcut = false
+            var components = URLComponents()
+            components.scheme = "shortcuts"
+            components.host = "open-shortcut"
+            components.queryItems = [URLQueryItem(name: "name", value: "连接 Sidecar")]
+            if let shortcutURL = components.url {
+                openedShortcut = NSWorkspace.shared.open(shortcutURL)
             }
+            if !openedShortcut {
+                let appURL = URL(fileURLWithPath: "/System/Applications/Shortcuts.app")
+                if fileManager.fileExists(atPath: appURL.path) {
+                    NSWorkspace.shared.open(appURL)
+                } else {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications/Shortcuts.app"))
+                }
+            }
+            message = "已打开连接快捷指令。请在有屏幕时点击运行，并在 macOS 弹窗中点击‘允许’；不会自动替你运行连接。"
         case .installShortcuts:
             installShortcuts()
         case .fileVault:
