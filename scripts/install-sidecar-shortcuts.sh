@@ -15,7 +15,6 @@ STATE_DIR="${SIDECAR_AUTO_STATE_DIR:-$HOME/Library/Application Support/Sidecar A
 SHORTCUTS_BIN="/usr/bin/shortcuts"
 SHORTCUTS_APP="/System/Applications/Shortcuts.app"
 UUIDGEN_BIN="/usr/bin/uuidgen"
-SHORTCUTS_DB="$HOME/Library/Shortcuts/Shortcuts.sqlite"
 
 write_key_status() {
     local slug="$1" equivalent="$2" configured="$3" workflow_id="${4:-${SHORTCUT_WORKFLOW_ID:-}}"
@@ -124,6 +123,12 @@ shortcut_names() {
         || true
 }
 
+shortcut_names_with_identifiers() {
+    LC_ALL=C "$SHORTCUTS_BIN" list --show-identifiers 2>/dev/null \
+        | sed '/^[[:space:]]*$/d; s/[[:space:]]*$//' \
+        || true
+}
+
 has_shortcut() {
     local name="$1" slug="$2"
     # `shortcuts list` prints one shortcut name per line.  Match complete
@@ -138,21 +143,23 @@ has_shortcut() {
 resolve_workflow_id() {
     local name="$1" slug="$2" workflow_id
     SHORTCUT_WORKFLOW_ID=""
-    # Shortcuts stores the optional service keyboard equivalent in the
-    # per-user `pbs` preferences domain.  There is no public Shortcuts CLI for
-    # this setting, but updating this preference is the same operation the
-    # Shortcuts detail panel performs.  Keep it best-effort: if a future
-    # macOS release changes the private SQLite schema, importing the shortcuts
-    # still succeeds and the user can enter the key in the detail panel.
-    [ -r "$SHORTCUTS_DB" ] || return 1
-    # Shortcuts.app publishes the name first and persists the workflow row a
-    # moment later.  Retry the UUID lookup so the automatic key assignment is
-    # not lost in that small import window.
+    # `Shortcuts.sqlite` is protected by macOS privacy controls.  The public
+    # CLI can return the same workflow identifiers without Full Disk Access;
+    # using it also lets this installer work when it is launched by the setup
+    # app rather than from a Terminal that happens to have database access.
+    # Shortcuts publishes the name before the row is fully settled, so retry
+    # the list lookup during the small import window.
     workflow_id=""
     for ((attempt = 0; attempt < 15; attempt++)); do
-        workflow_id="$(/usr/bin/sqlite3 -readonly "$SHORTCUTS_DB" \
-            "SELECT ZWORKFLOWID FROM ZSHORTCUT WHERE ZTOMBSTONED=0 AND ZNAME IN ('$name','$slug') ORDER BY ZMODIFICATIONDATE DESC LIMIT 1;" \
-            2>/dev/null | tr -d '[:space:]')"
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^(.*)\ \(([A-Fa-f0-9-]{36})\)$ ]]; then
+                local listed_name="${BASH_REMATCH[1]}"
+                if [ "$listed_name" = "$name" ] || [ "$listed_name" = "$slug" ]; then
+                    workflow_id="${BASH_REMATCH[2]}"
+                    break
+                fi
+            fi
+        done < <(shortcut_names_with_identifiers)
         [[ "$workflow_id" =~ ^[A-Fa-f0-9-]{36}$ ]] && break
         sleep 1
     done
