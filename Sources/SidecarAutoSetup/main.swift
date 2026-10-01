@@ -650,6 +650,9 @@ final class SetupModel: ObservableObject {
                       // reading it remotely, so it must be called out in the
                       // detail text without holding the setup progress at
                       // 10/11.
+                      // Green means the Mac-side Handoff switch is enabled.
+                      // The iPad switch remains unobservable and is called
+                      // out in the detail text for the user to confirm.
                       state: handoff.ok ? .good : .warning,
                       action: handoff.ok ? .refresh : .handoff,
                       actionTitle: handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
@@ -1158,7 +1161,7 @@ private struct SetupView: View {
                 AppMark(size: 42)
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Sidecar Auto").font(.headline)
-                Text("无显示器连接助手").font(.caption).foregroundStyle(.secondary)
+                    Text("无显示器连接助手").font(.caption).foregroundStyle(.secondary)
                 }
             }
             .padding(.horizontal, 18).padding(.top, 24).padding(.bottom, 22)
@@ -1196,7 +1199,7 @@ private struct SetupView: View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(section.title).font(.title2.bold())
-                Text(section == .overview ? "让没有显示器的 Mac mini 也能把 iPad 当主屏使用。" : model.message)
+                Text(section == .overview ? "让没有显示器的 Mac mini 把 iPad 作为主屏使用。" : model.message)
                     .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
@@ -1228,7 +1231,7 @@ private struct SetupView: View {
         HStack(spacing: 18) {
             AppMark(size: 68)
             VStack(alignment: .leading, spacing: 7) {
-                Text("为 Mac mini 使用 iPad 作为主屏").font(.title.bold())
+                Text("让你的 Mac mini 使用 iPad 作为主屏").font(.title.bold())
                 Text("专为无显示器使用场景设计。先完成一次配置，之后只需按快捷键，Sidecar Auto 会根据数据线和网络状态自动选择连接方式。")
                     .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
@@ -1245,14 +1248,14 @@ private struct SetupView: View {
         let total = model.requiredCount
         let passed = model.goodCount
         return Panel {
-            PanelTitle(title: "当前状态", subtitle: "只读检查，不会自动连接 iPad。", symbol: "checkmark.shield")
+            PanelTitle(title: "当前状态", subtitle: "只读检查，不会自动连接 iPad；iPad 端开关需手动确认。", symbol: "checkmark.shield")
             HStack(alignment: .lastTextBaseline, spacing: 8) {
                 Text(total == 0 ? "—" : "\(passed)")
                     .font(.system(size: 38, weight: .bold, design: .rounded)).foregroundStyle(Color.sidecarBlue)
                 Text(total == 0 ? "正在检查" : "项已通过").foregroundStyle(.secondary)
             }
             ProgressView(value: total == 0 ? 0 : Double(passed) / Double(total)).tint(Color.sidecarBlue)
-            Text("未通过的项目会在“环境检查”中显示处理按钮。").font(.caption).foregroundStyle(.secondary)
+            Text("未通过的项目会在“环境检查”中显示处理按钮。Mac 接力显示绿色时，仍请在 iPad 上确认“接力”已开启。").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -1491,7 +1494,7 @@ private struct CheckRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 7) {
                     Text(item.title).font(.body.weight(.semibold))
-                    StatusPill(state: item.state)
+                    StatusPill(state: item.state, itemID: item.id)
                 }
                 Text(item.detail).font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1509,10 +1512,12 @@ private struct CheckRow: View {
 
 private struct StatusPill: View {
     let state: CheckState
+    let itemID: String
     var body: some View {
         Text(
-            state == .good ? "正常"
-                : state == .partial ? "Mac 已开启"
+            itemID == "handoff" && state == .good ? "Mac 已开启 · iPad 待确认"
+                : state == .good ? "正常"
+                : state == .partial ? "Mac 已开启 · iPad 待确认"
                 : state == .action ? "需要处理"
                 : state == .warning ? "注意"
                 : state == .optional ? "可选"
