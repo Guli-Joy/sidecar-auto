@@ -434,7 +434,7 @@ final class SetupModel: ObservableObject {
             self.installerLog += result.output
             self.isInstalling = false
             self.message = result.status == 0
-                ? "连接和断开快捷指令导入流程已完成；请在详情中录入 ⌃⌥⌘S / ⌃⌥⌘D。"
+                ? "连接和断开快捷指令导入完成；已尝试设置 ⌃⌥⌘S / ⌃⌥⌘D，请查看安装日志。"
                 : "快捷指令导入失败（退出码 \(result.status)）；请查看日志。"
             self.refresh()
         }

@@ -15,6 +15,7 @@ STATE_DIR="${SIDECAR_AUTO_STATE_DIR:-$HOME/Library/Application Support/Sidecar A
 SHORTCUTS_BIN="/usr/bin/shortcuts"
 SHORTCUTS_APP="/System/Applications/Shortcuts.app"
 UUIDGEN_BIN="/usr/bin/uuidgen"
+SHORTCUTS_DB="$HOME/Library/Shortcuts/Shortcuts.sqlite"
 
 fail() {
     printf '快捷指令安装失败：%s\n' "$*" >&2
@@ -116,6 +117,45 @@ has_shortcut() {
     shortcut_names | grep -F -x -e "$name" -e "$slug" >/dev/null
 }
 
+set_keyboard_shortcut() {
+    local name="$1" slug="$2" equivalent="$3" workflow_id service_key plist
+    # Shortcuts stores the optional service keyboard equivalent in the
+    # per-user `pbs` preferences domain.  There is no public Shortcuts CLI for
+    # this setting, but updating this preference is the same operation the
+    # Shortcuts detail panel performs.  Keep it best-effort: if a future
+    # macOS release changes the private SQLite schema, importing the shortcuts
+    # still succeeds and the user can enter the key in the detail panel.
+    [ -r "$SHORTCUTS_DB" ] || return 1
+    workflow_id="$(/usr/bin/sqlite3 -readonly "$SHORTCUTS_DB" \
+        "SELECT ZWORKFLOWID FROM ZSHORTCUT WHERE ZTOMBSTONED=0 AND ZNAME IN ('$name','$slug') ORDER BY ZMODIFICATIONDATE DESC LIMIT 1;" \
+        2>/dev/null | tr -d '[:space:]')"
+    [[ "$workflow_id" =~ ^[A-Fa-f0-9-]{36}$ ]] || return 1
+
+    plist="$STATE_DIR/pbs.$$.plist"
+    if ! /usr/bin/defaults export pbs "$plist" >/dev/null 2>&1; then
+        return 1
+    fi
+    service_key="(null) - ${workflow_id} - runShortcutAsService"
+    # plutil's key-path syntax accepts the literal service key (including
+    # spaces and parentheses).  Insert a new dictionary for first-time
+    # imports, or replace only the equivalent when the entry already exists.
+    if ! /usr/bin/plutil -insert "NSServicesStatus.${service_key}" \
+        -xml "<dict><key>key_equivalent</key><string>${equivalent}</string></dict>" \
+        "$plist" >/dev/null 2>&1; then
+        /usr/bin/plutil -replace "NSServicesStatus.${service_key}.key_equivalent" \
+            -string "$equivalent" "$plist" >/dev/null 2>&1 || {
+            rm -f "$plist"
+            return 1
+        }
+    fi
+    if ! /usr/bin/defaults import pbs "$plist" >/dev/null 2>&1; then
+        rm -f "$plist"
+        return 1
+    fi
+    rm -f "$plist"
+    return 0
+}
+
 install_one() {
     local name="$1" script="$2" slug="$3"
     local unsigned="$STATE_DIR/$slug.unsigned.shortcut"
@@ -128,6 +168,17 @@ install_one() {
 
     if has_shortcut "$name" "$slug"; then
         note "已存在“${name}”，跳过导入。"
+        local hotkey
+        if [ "$name" = "连接 Sidecar" ]; then
+            hotkey='@~^s'
+        else
+            hotkey='@~^d'
+        fi
+        if set_keyboard_shortcut "$name" "$slug" "$hotkey"; then
+            note "已尝试设置“${name}”键盘快捷键。"
+        else
+            note "无法自动设置“${name}”键盘快捷键；请在快捷指令详情中录入建议组合键。"
+        fi
         return 0
     fi
 
@@ -148,6 +199,17 @@ install_one() {
     while [ "$waited" -lt 600 ]; do
         if has_shortcut "$name" "$slug"; then
             note "“${name}”已添加。"
+            local hotkey
+            if [ "$name" = "连接 Sidecar" ]; then
+                hotkey='@~^s'
+            else
+                hotkey='@~^d'
+            fi
+            if set_keyboard_shortcut "$name" "$slug" "$hotkey"; then
+                note "已尝试设置“${name}”键盘快捷键。"
+            else
+                note "无法自动设置“${name}”键盘快捷键；请在快捷指令详情中录入建议组合键。"
+            fi
             return 0
         fi
         sleep 1
