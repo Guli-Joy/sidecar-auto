@@ -2,14 +2,95 @@ import AppKit
 @preconcurrency import CoreBluetooth
 import SwiftUI
 
+@MainActor
+final class SidecarAutoAppDelegate: NSObject, NSApplicationDelegate {
+    private weak var mainWindow: NSWindow?
+    private var windowObserver: NSObjectProtocol?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Closing the settings window must not terminate the process: the
+        // menu-bar item is the recovery path for headless use.
+        NSApp.applicationIconImage = NSImage(named: NSImage.applicationIconName)
+        windowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            guard let window = notification.object as? NSWindow,
+                  window.styleMask.contains(.titled),
+                  !(window is NSPanel) else { return }
+            Task { @MainActor [weak self] in self?.mainWindow = window }
+        }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { showMainWindow() }
+        return true
+    }
+
+    func showMainWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = mainWindow {
+            if window.isMiniaturized { window.deminiaturize(nil) }
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        // The first launch can race WindowGroup creation. Retry after SwiftUI
+        // has materialized its NSWindow instead of opening a duplicate window.
+        DispatchQueue.main.async { [weak self] in
+            self?.mainWindow = NSApp.windows.first(where: {
+                $0.styleMask.contains(.titled) && !($0 is NSPanel)
+            })
+            self?.mainWindow?.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    deinit {
+        if let windowObserver { NotificationCenter.default.removeObserver(windowObserver) }
+    }
+}
+
 @main
 struct SidecarAutoSetupApp: App {
+    @NSApplicationDelegateAdaptor(SidecarAutoAppDelegate.self) private var appDelegate
+    @StateObject private var model = SetupModel()
+
     var body: some Scene {
         WindowGroup {
-            SetupView()
+            SetupView(model: model)
                 .frame(minWidth: 820, minHeight: 680)
         }
         .windowResizability(.contentSize)
+
+        MenuBarExtra {
+            Button("打开设置") {
+                appDelegate.showMainWindow()
+            }
+            Divider()
+            if model.isOperating {
+                Label(model.operationStage.isEmpty ? "操作进行中…" : model.operationStage,
+                      systemImage: "arrow.triangle.2.circlepath")
+                Button("取消当前操作") { model.cancelOperation() }
+                    .disabled(model.isCancelRequested)
+            } else {
+                Button("连接一次") { model.connect() }
+                    .disabled(!model.canRunConnection || model.isInstalling)
+                Button("断开一次") { model.disconnect() }
+                    .disabled(!model.canRunConnection || model.isInstalling)
+            }
+            Divider()
+            Button("退出 Sidecar Auto") { NSApp.terminate(nil) }
+        } label: {
+            Image(systemName: model.isOperating
+                  ? "rectangle.connected.to.line.below.fill"
+                  : "rectangle.connected.to.line.below")
+                .help("Sidecar Auto：打开设置或手动连接")
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
 
@@ -1576,7 +1657,7 @@ private enum SetupSection: String, CaseIterable, Identifiable {
 }
 
 private struct SetupView: View {
-    @StateObject private var model = SetupModel()
+    @ObservedObject var model: SetupModel
     @State private var section: SetupSection = .overview
     @AppStorage("sidecarAutoSetupHasSeenWizard") private var hasSeenWizard = false
     @State private var showingWizard = false

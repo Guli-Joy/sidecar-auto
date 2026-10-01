@@ -21,6 +21,10 @@
   user's post-login desktop announcement is loaded and can enable or disable
   it without starting Sidecar or touching iPad state.
 
+- Added a menu-bar extra and app-delegate window lifecycle handling. Closing
+  the settings window now keeps the app reachable, with menu actions for
+  opening settings, one-shot connect/disconnect, cancellation, and quit.
+
 - Added a first-run configuration wizard, USB iPad scanning with automatic target
   field filling, separate Mac/iPad readiness messaging, and live connection-stage
   feedback in the manual test view.
