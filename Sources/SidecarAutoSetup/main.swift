@@ -631,6 +631,8 @@ final class SetupModel: ObservableObject {
         let runtime = runtimeStatus()
         let mac = ProcessInfo.processInfo.operatingSystemVersion
         let macOK = mac.majorVersion >= 13
+        let transport = usbTransportStatus()
+        let physicalDisplay = physicalDisplayPresent()
         let wifi = wifiStatus()
         let bluetooth = bluetoothStatus()
         let handoff = handoffStatus()
@@ -654,21 +656,29 @@ final class SetupModel: ObservableObject {
                       ? "已找到配置，目标名称：\(config.iPadName)"
                       : "还没有配置文件，保存下面的配置即可创建",
                       state: configExists ? .good : .action, action: .refresh, actionTitle: "重新检查"),
+            CheckItem(id: "transport", title: "当前连接方式", detail: transport.detail,
+                      state: transport.ok ? .good : .action,
+                      action: .refresh, actionTitle: "重新检查"),
             CheckItem(id: "wifi", title: "Wi-Fi", detail: wifi.detail,
-                      state: wifi.ok ? .good : .warning, action: .refresh, actionTitle: "重新检查"),
+                      state: transport.isWired ? .optional : (wifi.ok ? .good : .warning),
+                      action: transport.isWired ? nil : .refresh,
+                      actionTitle: transport.isWired ? nil : "重新检查",
+                      required: !transport.isWired),
             CheckItem(id: "bluetooth", title: "蓝牙", detail: bluetooth.detail,
-                      state: bluetooth.ok ? .good : .action,
-                      action: bluetooth.ok ? .refresh : .bluetooth,
-                      actionTitle: bluetooth.ok ? "重新检查" : "申请 / 开启"),
+                      state: transport.isWired ? .optional : (bluetooth.ok ? .good : .action),
+                      action: transport.isWired ? nil : (bluetooth.ok ? .refresh : .bluetooth),
+                      actionTitle: transport.isWired ? nil : (bluetooth.ok ? "重新检查" : "申请 / 开启"),
+                      required: !transport.isWired),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
                       // A positive result here means the Mac-side preference
                       // is enabled. The iPad switch cannot be read remotely,
                       // so it is called out in the detail text rather than
                       // represented as a separate local check. This row still
                       // counts the Mac-side prerequisite toward readiness.
-                      state: handoff.ok ? .good : .warning,
-                      action: handoff.ok ? .refresh : .handoff,
-                      actionTitle: handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
+                      state: transport.isWired ? .optional : (handoff.ok ? .good : .warning),
+                      action: transport.isWired ? nil : (handoff.ok ? .refresh : .handoff),
+                      actionTitle: transport.isWired ? nil : (handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
+                      required: !transport.isWired),
             CheckItem(id: "accessibility", title: "辅助功能权限", detail:
                       "当前连接路径不需要辅助功能权限；只有启用需要 UI 自动化的可选功能时才需要手动授权。",
                       state: .optional, action: nil, actionTitle: nil, required: false),
@@ -678,15 +688,15 @@ final class SetupModel: ObservableObject {
             CheckItem(id: "betterdisplay", title: "BetterDisplay", detail: betterDisplay.detail,
                       state: config.virtualDisplayBackend == .betterdisplay
                         ? (betterDisplay.ok ? .good : .action) : .optional,
-                      action: .betterDisplay,
+                      action: config.virtualDisplayBackend == .betterdisplay ? .betterDisplay : nil,
                       actionTitle: config.virtualDisplayBackend == .betterdisplay
-                        ? (betterDisplay.ok ? "打开 BetterDisplay" : "安装 / 打开 BetterDisplay")
-                        : "查看 BetterDisplay",
+                        ? (betterDisplay.ok ? "打开 BetterDisplay" : "安装 / 打开 BetterDisplay") : nil,
                       required: config.virtualDisplayBackend == .betterdisplay),
             CheckItem(id: "builtin-virtual", title: "项目内置虚拟屏", detail: builtinVirtual.detail,
                       state: builtinVirtual.ok ? .good : .action,
                       action: builtinVirtual.ok ? .refresh : .install,
-                      actionTitle: builtinVirtual.ok ? "重新检查" : "安装 / 修复"),
+                      actionTitle: builtinVirtual.ok ? "重新检查" : "安装 / 修复",
+                      required: !physicalDisplay && config.virtualDisplayBackend != .betterdisplay),
             CheckItem(id: "shortcuts", title: "macOS 快捷指令", detail: shortcuts.detail,
                       state: shortcuts.ok ? .good : .action,
                       // Imported shortcuts still need Apple's one-time
@@ -735,6 +745,35 @@ final class SetupModel: ObservableObject {
 
     private nonisolated static func commandExists(_ path: String) -> Bool {
         FileManager.default.isExecutableFile(atPath: path)
+    }
+
+    private nonisolated static func usbTransportStatus() ->
+        (ok: Bool, isWired: Bool, detail: String) {
+        let detector = "\(NSHomeDirectory())/.local/bin/sidecar-ipad-usb-detect.sh"
+        guard commandExists(detector) else {
+            return (false, false, "尚未安装 iPad 数据线检测程序；将按无线条件检查。")
+        }
+        let output = command(detector, [], timeout: 5)
+        if output.contains("USB_IPAD_MATCHED") {
+            return (true, true, "已检测到 iPad 数据线；连接一次时将优先使用有线 Sidecar。")
+        }
+        if output.contains("USB_IPAD_AMBIGUOUS") {
+            return (false, false, "检测到多台 iPad 数据设备，请填写 USB 序列号后再连接。")
+        }
+        if output.contains("USB_IPAD_NOT_FOUND") {
+            return (true, false, "未检测到 iPad 数据线；连接一次时将准备无线 Sidecar。")
+        }
+        return (false, false, "暂时无法确认 iPad 数据线状态；连接前会再次检查。")
+    }
+
+    private nonisolated static func physicalDisplayPresent() -> Bool {
+        let path = "\(NSHomeDirectory())/.local/bin/display-state"
+        guard commandExists(path) else { return false }
+        let output = command(path, [], timeout: 5)
+        return output.split(separator: "\n").contains { line in
+            line.trimmingCharacters(in: .whitespaces).hasPrefix("physical=") &&
+                (line.split(separator: "=").last.map(String.init) ?? "0") != "0"
+        }
     }
 
     private nonisolated static func runtimeStatus() -> (ok: Bool, detail: String) {
