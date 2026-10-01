@@ -638,6 +638,7 @@ final class SetupModel: ObservableObject {
         let handoff = handoffStatus()
         let betterDisplay = betterDisplayStatus(backend: config.virtualDisplayBackend)
         let builtinVirtual = builtinVirtualDisplayStatus()
+        let betterDisplayRequired = !physicalDisplay && config.virtualDisplayBackend == .betterdisplay
         let configExists = FileManager.default.fileExists(
             atPath: "\(NSHomeDirectory())/.config/sidecar-auto/config")
         let shortcuts = shortcutsStatus()
@@ -686,12 +687,12 @@ final class SetupModel: ObservableObject {
                       "当前连接和显示状态检查不需要屏幕录制权限；BetterDisplay 如有额外要求会在其应用内提示。",
                       state: .optional, action: nil, actionTitle: nil, required: false),
             CheckItem(id: "betterdisplay", title: "BetterDisplay", detail: betterDisplay.detail,
-                      state: config.virtualDisplayBackend == .betterdisplay
+                      state: betterDisplayRequired
                         ? (betterDisplay.ok ? .good : .action) : .optional,
-                      action: config.virtualDisplayBackend == .betterdisplay ? .betterDisplay : nil,
-                      actionTitle: config.virtualDisplayBackend == .betterdisplay
+                      action: betterDisplayRequired ? .betterDisplay : nil,
+                      actionTitle: betterDisplayRequired
                         ? (betterDisplay.ok ? "打开 BetterDisplay" : "安装 / 打开 BetterDisplay") : nil,
-                      required: config.virtualDisplayBackend == .betterdisplay),
+                      required: betterDisplayRequired),
             CheckItem(id: "builtin-virtual", title: "项目内置虚拟屏", detail: builtinVirtual.detail,
                       state: builtinVirtual.ok ? .good : .action,
                       action: builtinVirtual.ok ? .refresh : .install,
