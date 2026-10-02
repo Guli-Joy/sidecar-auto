@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml/badge.svg)](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Guli-Joy/sidecar-auto?display_name=tag)](https://github.com/Guli-Joy/sidecar-auto/releases)
-[![macOS](https://img.shields.io/badge/macOS-13%2B-111827)](https://github.com/Guli-Joy/sidecar-auto#requirements)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-111827)](#requirements)
 [![License](https://img.shields.io/badge/license-MIT-2563eb)](../LICENSE)
 
 Sidecar Auto is built for people who use an iPad as a Mac display, especially Mac mini setups without a permanent monitor. It checks the current state, chooses USB or direct wireless transport, prepares a headless display when needed, and verifies that the Sidecar picture is actually online.
@@ -22,7 +22,7 @@ Every action is explicit, bounded, and single-shot. The controller does not retr
 
 ## Download
 
-Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The first stable release is [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0).
+Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The first stable release is [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0), with an Apple Silicon (arm64) installer.
 
 If macOS blocks the first launch, open **System Settings → Privacy & Security** and allow the app to open. Depending on the macOS version, the control may be shown as **Allow applications from anywhere** or **Open Anyway**.
 
@@ -104,7 +104,7 @@ Logs stay in `~/Library/Logs/sidecar-auto.log` and rotate automatically. When mu
 - [Architecture](ARCHITECTURE.md): controllers, helpers, installer, and display providers.
 - [Security model](SECURITY_MODEL.md): local data, configuration boundaries, and macOS permissions.
 - [Testing](TESTING.md): automated checks and real-device validation boundaries.
-- [Release guide](RELEASE.md): App, DMG, signing, notarization, and checksums.
+- [Release guide](RELEASE.md): free DMG builds, upload assets, and checksums.
 - [Changelog](CHANGELOG.md): version history.
 
 ## Limitations and privacy

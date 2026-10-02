@@ -1,6 +1,6 @@
 # Sidecar Auto
 
-> 用 Mac 的快捷指令，一次连接 Mac 与 iPad 的 Sidecar 显示。
+> 一键用 Mac 快捷指令连接 iPad Sidecar 显示器。
 
 [![CI](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml/badge.svg)](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Guli-Joy/sidecar-auto?display_name=tag)](https://github.com/Guli-Joy/sidecar-auto/releases)
@@ -18,13 +18,13 @@ Sidecar Auto 面向需要把 iPad 当作 Mac 显示器的人，尤其适合没�
 | 没有实体显示器 | 启用项目内置的固定虚拟屏；也可以选择 BetterDisplay。 |
 | 重复按连接 | 检查现有会话，避免重复连接或抢占另一台 iPad。 |
 
-连接过程支持提示音、中文语音和通知；失败、取消和超时都会结束在有限时间内，不会后台无限重试。
+连接过程支持提示音、中文语音和通知；失败、取消和超时都会在有限时间内结束，不会后台无限重试。
 
 > Sidecar Auto 使用 Apple 未公开的 `SidecarCore` API。macOS 更新可能影响连接能力；请先阅读[限制与隐私](#限制与隐私)。
 
 ## 下载
 
-普通用户直接前往 [Releases](https://github.com/Guli-Joy/sidecar-auto/releases) 下载最新 DMG。当前首个正式版本是 [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0)。
+普通用户直接前往 [Releases](https://github.com/Guli-Joy/sidecar-auto/releases) 下载最新 DMG。当前首个正式版本是 [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0)，提供 Apple Silicon（arm64）安装包。
 
 首次打开时如果 macOS 拦截应用，请到“系统设置 → 隐私与安全性”允许打开；部分系统会显示“允许来自任何来源”或“仍要打开”。
 
@@ -53,10 +53,11 @@ cd sidecar-auto
 "$HOME/.local/bin/sidecar-disconnect-once.sh"
 ```
 
-无线排障入口：
+指定连接路径排障入口：
 
 ```sh
-"$HOME/.local/bin/sidecar-connect-once.sh" wireless
+"$HOME/.local/bin/sidecar-connect-once.sh" wired    # 有线排障
+"$HOME/.local/bin/sidecar-connect-once.sh" wireless # 无线排障
 ```
 
 ## 前置条件
@@ -113,7 +114,7 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 - [架构说明](docs/ARCHITECTURE.md)：脚本、Swift helper、安装器和显示后端。
 - [安全与权限模型](docs/SECURITY_MODEL.md)：本地数据、配置边界和 macOS 权限。
 - [测试与发布边界](docs/TESTING.md)：自动化测试和真实设备验证范围。
-- [发布说明](docs/RELEASE.md)：构建 DMG、签名、公证和校验和。
+- [发布说明](docs/RELEASE.md)：构建 DMG、上传资产和校验和。
 - [变更记录](docs/CHANGELOG.md)：版本变更。
 - [English overview](docs/README.en.md)：英文项目简介。
 - [第三方声明](docs/NOTICE.md)：上游 `sidecarctl` 许可和归属。
