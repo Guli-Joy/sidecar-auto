@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Create a compressed DMG from a previously built Sidecar Auto Setup.app.
+# Create a compressed drag-and-drop DMG from a previously built Sidecar Auto Setup.app.
 # Signing and notarization are deliberately separate release steps.
 
 set -euo pipefail
@@ -13,7 +13,7 @@ usage() {
     cat <<USAGE
 usage: $0 [--app PATH] [--output PATH] [--version VERSION]
 
-Create Sidecar-Auto-Setup.dmg from an existing .app bundle.
+Create Sidecar-Auto-Setup.dmg with the app and an Applications shortcut.
 USAGE
 }
 
@@ -33,8 +33,14 @@ command -v hdiutil >/dev/null 2>&1 || { printf 'hdiutil not found\n' >&2; exit 1
 
 mkdir -p "$OUTPUT_DIR"
 DMG_PATH="$OUTPUT_DIR/Sidecar-Auto-Setup.dmg"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/sidecar-auto-dmg.XXXXXX")"
+trap 'rm -rf "$STAGE"' EXIT
+
+ditto "$APP_PATH" "$STAGE/Sidecar Auto Setup.app"
+ln -s /Applications "$STAGE/Applications"
+
 rm -f "$DMG_PATH"
-hdiutil create -volname "Sidecar Auto Setup" -srcfolder "$APP_PATH" \
+hdiutil create -volname "Sidecar Auto Setup" -srcfolder "$STAGE" \
     -ov -format UDZO "$DMG_PATH" >/dev/null
 
 printf 'created %s (version %s)\n' "$DMG_PATH" "$VERSION"

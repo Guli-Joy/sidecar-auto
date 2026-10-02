@@ -8,6 +8,7 @@ CI 只做不会占用用户设备的检查：
 - Swift CLI-only 编译；
 - `Sources/DisplayState/DisplayState.swift`、`Sources/BluetoothRadio/sidecar-bluetooth-radio.c` 和 `Sources/VirtualDisplay/sidecar-virtual-display.m` 的 macOS 构建；
 - SwiftUI 设置助手的 host-only App bundle 构建、资源树、Info.plist 和 Mach-O 检查；
+- DMG 镜像校验，以及 App 和“应用程序”快捷方式布局检查；
 - plist 和发布目录检查。
 - USB iPad 检测器的唯一设备、无设备、多设备和序列号筛选测试；测试使用伪造
   的 IORegistry 输出，不会接触真实 iPad。

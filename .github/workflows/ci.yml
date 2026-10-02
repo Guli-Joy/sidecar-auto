@@ -57,6 +57,7 @@ jobs:
             "$app/Contents/Resources/bin/sidecar-virtual-display"; do
             file "$binary" | grep -q 'Mach-O'
           done
+          bash tests/test_dmg_layout.sh "$app"
       - name: Check public tree
         run: |
           set -euo pipefail
