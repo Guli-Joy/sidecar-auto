@@ -99,6 +99,7 @@ check_sources() {
         "$ROOT/Sources/VirtualDisplay/sidecar-virtual-display.m" \
         "$SCRIPT_ROOT/sidecar-connect-once.sh" \
         "$SCRIPT_ROOT/sidecar-connect-wireless-once.sh" \
+        "$SCRIPT_ROOT/sidecar-runtime-common.sh" \
         "$SCRIPT_ROOT/sidecar-ipad-usb-detect.sh" \
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
@@ -211,6 +212,7 @@ build_outputs() {
     for script in \
         "$SCRIPT_ROOT/sidecar-connect-once.sh" \
         "$SCRIPT_ROOT/sidecar-connect-wireless-once.sh" \
+        "$SCRIPT_ROOT/sidecar-runtime-common.sh" \
         "$SCRIPT_ROOT/sidecar-ipad-usb-detect.sh" \
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
@@ -285,6 +287,7 @@ EOF
         sidecar-virtual-display \
         sidecar-connect-once.sh \
         sidecar-connect-wireless-once.sh \
+        sidecar-runtime-common.sh \
         sidecar-ipad-usb-detect.sh \
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
@@ -308,6 +311,7 @@ EOF
         sidecar-virtual-display \
         sidecar-connect-once.sh \
         sidecar-connect-wireless-once.sh \
+        sidecar-runtime-common.sh \
         sidecar-ipad-usb-detect.sh \
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
@@ -350,6 +354,7 @@ printf '  %s\n' \
     "$BIN_DIR/sidecar-virtual-display" \
     "$BIN_DIR/sidecar-connect-once.sh" \
     "$BIN_DIR/sidecar-connect-wireless-once.sh" \
+    "$BIN_DIR/sidecar-runtime-common.sh" \
     "$BIN_DIR/sidecar-disconnect-once.sh" \
     "$BIN_DIR/sidecar-ipad-usb-detect.sh" \
     "$BIN_DIR/sidecar-login-ready.sh" \

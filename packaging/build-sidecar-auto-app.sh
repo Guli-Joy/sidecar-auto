@@ -128,6 +128,7 @@ for required in \
     "$ROOT/vendor/sidecarctl/Sources/Shared" \
     "$ROOT/scripts/sidecar-connect-once.sh" \
     "$ROOT/scripts/sidecar-connect-wireless-once.sh" \
+    "$ROOT/scripts/sidecar-runtime-common.sh" \
     "$ROOT/scripts/sidecar-disconnect-once.sh" \
     "$ROOT/scripts/sidecar-doctor.sh" \
     "$ROOT/scripts/sidecar-hotkey.sh" \
@@ -220,6 +221,7 @@ chmod 0755 "$STAGE/app/Contents/MacOS/SidecarAutoSetup"
 for script in \
     sidecar-connect-once.sh \
     sidecar-connect-wireless-once.sh \
+    sidecar-runtime-common.sh \
     sidecar-disconnect-once.sh \
     sidecar-doctor.sh \
     sidecar-hotkey.sh \

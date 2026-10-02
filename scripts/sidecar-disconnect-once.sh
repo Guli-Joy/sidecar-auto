@@ -12,32 +12,6 @@ CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
 # can show a truthful, per-shortcut authorization state without claiming that
 # macOS permissions were granted silently.
 SLUG="disconnect-sidecar"
-mark_shortcut_invocation() {
-    # New templates set an explicit marker.  Keep a bounded parent-process
-    # fallback so shortcuts imported before this release can still record the
-    # first-run consent after they are launched from Shortcuts.app.
-    local launched_by_shortcuts=0 parent="" grandparent=""
-    if [ "${SIDECAR_SHORTCUT_INVOCATION:-0}" = "1" ]; then
-        launched_by_shortcuts=1
-    elif [ -n "${PPID:-}" ]; then
-        parent="$(/bin/ps -o command= -p "$PPID" 2>/dev/null || true)"
-        grandparent="$(/bin/ps -o command= -p "$(/bin/ps -o ppid= -p "$PPID" 2>/dev/null | tr -d ' ')" 2>/dev/null || true)"
-        case "$parent $grandparent" in
-            *Shortcuts*|*shortcuts*) launched_by_shortcuts=1 ;;
-        esac
-    fi
-    [ "$launched_by_shortcuts" = "1" ] || return 0
-    local state_dir="$HOME/Library/Application Support/Sidecar Auto/Shortcuts"
-    local marker="$state_dir/${SLUG}.shell-status"
-    mkdir -p "$state_dir" 2>/dev/null || return 0
-    {
-        printf 'authorized=1\n'
-        printf 'timestamp=%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')"
-    } >"$marker.tmp.$$" 2>/dev/null || return 0
-    chmod 600 "$marker.tmp.$$" 2>/dev/null || true
-    mv -f "$marker.tmp.$$" "$marker" 2>/dev/null || rm -f "$marker.tmp.$$"
-}
-mark_shortcut_invocation
 
 : "${IPAD_NAME:=iPad}"
 : "${SIDECAR_BIN:=$HOME/.local/bin/sidecarctl}"
@@ -65,9 +39,14 @@ mark_shortcut_invocation
 ACTIVE_VIRTUAL_DISPLAY_BACKEND=""
 
 LOCK_DIR="$HOME/Library/Caches/sidecar-auto/explicit-action.lock"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
+    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
+    exit 127
+fi
+. "$SCRIPT_DIR/sidecar-runtime-common.sh"
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$LOCK_DIR")" 2>/dev/null || true
-timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
-log() { printf '%s %s\n' "$(timestamp)" "$*" >> "$LOG_FILE"; }
+mark_shortcut_invocation "$SLUG"
 notify() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
     /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true

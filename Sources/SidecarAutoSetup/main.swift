@@ -625,8 +625,25 @@ final class SetupModel: ObservableObject {
         message = "正在重启 Sidecar Auto，以重新读取系统授权……"
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in
+        configuration.createsNewApplicationInstance = true
+        let currentPID = NSRunningApplication.current.processIdentifier
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { application, error in
             DispatchQueue.main.async {
+                // LSMultipleInstancesProhibited can make LaunchServices return
+                // the existing process even when a new instance was requested.
+                // In that case schedule a second open after this process exits;
+                // otherwise terminating here would leave no App running.
+                if error != nil || application?.processIdentifier == currentPID {
+                    let relauncher = Process()
+                    relauncher.executableURL = URL(fileURLWithPath: "/bin/sh")
+                    relauncher.arguments = [
+                        "-c",
+                        "sleep 0.4; exec /usr/bin/open -a \(self.shellQuote(appURL.path))"
+                    ]
+                    relauncher.standardOutput = FileHandle.nullDevice
+                    relauncher.standardError = FileHandle.nullDevice
+                    try? relauncher.run()
+                }
                 NSApp.terminate(nil)
             }
         }
@@ -1075,7 +1092,7 @@ final class SetupModel: ObservableObject {
             guard parts.count == 2 else { continue }
             let key = parts[0].trimmingCharacters(in: .whitespaces)
             let raw = parts[1].trimmingCharacters(in: .whitespaces)
-            let parsed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            let parsed = parseShellValue(raw)
             switch key {
             case "IPAD_NAME": value.iPadName = parsed
             case "IPAD_USB_SERIAL_NUMBER": value.usbSerial = parsed
@@ -1086,6 +1103,49 @@ final class SetupModel: ObservableObject {
             }
         }
         return value
+    }
+
+    /// Decode the small shell-value subset written by `writeConfig` and used
+    /// by the bundled scripts.  A plain trim of quote characters corrupts
+    /// names containing apostrophes because `shellQuote` writes them as the
+    /// POSIX sequence `'\\''`.
+    private func parseShellValue(_ raw: String) -> String {
+        guard raw.count >= 2 else {
+            return raw.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        }
+        if raw.first == "'", raw.last == "'" {
+            let inner = String(raw.dropFirst().dropLast())
+            return inner.replacingOccurrences(of: "'\\''", with: "'")
+        }
+        if raw.first == "\"", raw.last == "\"" {
+            let inner = raw.dropFirst().dropLast()
+            var result = ""
+            var escaped = false
+            for character in inner {
+                if escaped {
+                    // In POSIX double quotes, backslash only quotes a
+                    // backslash, dollar sign, backtick, double quote, or a
+                    // newline. Preserve it for other characters so a
+                    // manually edited value such as `iPad\\ Pro` is not
+                    // silently changed while reading the config.
+                    if character == "\\" || character == "$" ||
+                        character == "`" || character == "\"" {
+                        result.append(character)
+                    } else {
+                        result.append("\\")
+                        result.append(character)
+                    }
+                    escaped = false
+                } else if character == "\\" {
+                    escaped = true
+                } else {
+                    result.append(character)
+                }
+            }
+            if escaped { result.append("\\") }
+            return result
+        }
+        return raw
     }
 
     private func writeConfig(_ value: SetupConfig) throws {
@@ -1322,6 +1382,7 @@ final class SetupModel: ObservableObject {
             "sidecar-virtual-display",
             "sidecar-connect-once.sh",
             "sidecar-connect-wireless-once.sh",
+            "sidecar-runtime-common.sh",
             "sidecar-ipad-usb-detect.sh",
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
@@ -1758,6 +1819,7 @@ final class SetupModel: ObservableObject {
         let scripts = [
             "sidecar-connect-once.sh",
             "sidecar-connect-wireless-once.sh",
+            "sidecar-runtime-common.sh",
             "sidecar-ipad-usb-detect.sh",
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
@@ -1786,6 +1848,7 @@ final class SetupModel: ObservableObject {
         let scripts = [
             "sidecar-connect-once.sh",
             "sidecar-connect-wireless-once.sh",
+            "sidecar-runtime-common.sh",
             "sidecar-ipad-usb-detect.sh",
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consolidated shared runtime helpers for connection, disconnection and the
+  post-login announcement. Logs now rotate at about 1 MiB, and the bundled
+  app and source installer deploy the helper as part of the runtime payload.
 - Fixed the menu-bar recovery path by keeping a scene-scoped openWindow
   action in the app delegate. Closing the settings window no longer leaves
   “打开设置” without a window to show. Reorganized the environment page into

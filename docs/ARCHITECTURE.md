@@ -9,6 +9,7 @@ Sidecar Auto 把一次连接动作拆成“只读预检 → 一次状态改变 �
 | `scripts/sidecar-connect-once.sh` | 快捷指令入口；串行锁、音效、语音、显示拓扑和 USB/无线决策 |
 | `scripts/sidecar-connect-wireless-once.sh` | 明确请求 `ForceAWDL` 的排障入口 |
 | `scripts/sidecar-disconnect-once.sh` | 一次断开，不自动重连 |
+| `scripts/sidecar-runtime-common.sh` | 连接、断开和登录提示共用的时间戳、日志轮转和快捷指令授权标记 |
 | `scripts/install-sidecar-shortcuts.sh` | 生成本机签名的快捷指令模板，并按系统确认顺序打开导入 |
 | `scripts/sidecar-doctor.sh` | 只读诊断，不改变设备和设置 |
 | `scripts/sidecar-ipad-usb-detect.sh` | 从 IORegistry 判断是否存在唯一 iPad USB 数据设备 |
@@ -48,6 +49,7 @@ Swift 直接调用 macOS 框架并承担私有 API 和状态快照。Objective-C
 
 - 配置：`~/.config/sidecar-auto/config`
 - 日志：`~/Library/Logs/sidecar-auto.log`
+- 日志超过约 1 MiB 后轮转为 `sidecar-auto.log.1`，连接、断开和登录提示共用同一套轮转逻辑
 - 并发锁：`~/Library/Caches/sidecar-auto/explicit-action.lock`
 - Swift CLI 的 UserDefaults 域：`io.github.sidecarreconnect`
 

@@ -5,9 +5,14 @@
 set -u
 
 LOG_FILE="$HOME/Library/Logs/sidecar-auto.log"
+LOG_MAX_BYTES="${LOG_MAX_BYTES:-1048576}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
+    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
+    exit 127
+fi
+. "$SCRIPT_DIR/sidecar-runtime-common.sh"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
-log() { printf '%s %s\n' "$(timestamp)" "$*" >> "$LOG_FILE"; }
 
 if [ -x /usr/bin/afplay ] && [ -r /System/Library/Sounds/Glass.aiff ]; then
     /usr/bin/afplay /System/Library/Sounds/Glass.aiff >/dev/null 2>&1 || true
