@@ -317,28 +317,6 @@ struct AppUpdateRelease: Sendable, Equatable {
     let assetName: String
 }
 
-private struct GitHubReleasePayload: Decodable, Sendable {
-    let tagName: String
-    let htmlURL: String
-    let assets: [GitHubAssetPayload]
-
-    enum CodingKeys: String, CodingKey {
-        case tagName = "tag_name"
-        case htmlURL = "html_url"
-        case assets
-    }
-}
-
-private struct GitHubAssetPayload: Decodable, Sendable {
-    let name: String
-    let browserDownloadURL: String
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case browserDownloadURL = "browser_download_url"
-    }
-}
-
 struct USBIPadCandidate: Identifiable, Hashable, Sendable {
     let name: String
     let serial: String
@@ -423,8 +401,11 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    // Use GitHub's public latest-release redirect instead of the unauthenticated
+    // REST API. The API is limited to 60 requests per hour per public IP, which
+    // makes a normal app update check fail for everyone sharing that address.
     private nonisolated static let latestReleaseEndpoint =
-        "https://api.github.com/repos/Guli-Joy/sidecar-auto/releases/latest"
+        "https://github.com/Guli-Joy/sidecar-auto/releases/latest"
 
     private nonisolated static var currentAppVersionValue: String {
         (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
@@ -443,26 +424,28 @@ final class SetupModel: ObservableObject {
                     throw UpdateError.invalidEndpoint
                 }
                 var request = URLRequest(url: endpoint)
-                request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                request.setValue("text/html", forHTTPHeaderField: "Accept")
                 request.setValue("Sidecar-Auto/\(currentVersion)", forHTTPHeaderField: "User-Agent")
-                let (data, response) = try await URLSession.shared.data(for: request)
+                let (_, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
                     throw UpdateError.server((response as? HTTPURLResponse)?.statusCode ?? 0)
                 }
-                let payload = try JSONDecoder().decode(GitHubReleasePayload.self, from: data)
-                let version = Self.normalizedVersion(payload.tagName)
+                guard let finalURL = response.url,
+                      let tag = Self.releaseTag(from: finalURL) else {
+                    throw UpdateError.invalidRelease
+                }
+                let version = Self.normalizedVersion(tag)
                 guard !version.isEmpty else { throw UpdateError.invalidRelease }
-                guard let asset = payload.assets.first(where: {
-                    let name = $0.name.lowercased()
-                    return name.hasSuffix(".dmg") && name.contains("arm64")
-                }) else {
-                    throw UpdateError.missingArm64Asset
+                let assetName = "Sidecar-Auto-Setup-\(version)-arm64.dmg"
+                let releaseURL = "https://github.com/Guli-Joy/sidecar-auto/releases/tag/\(tag)"
+                guard let dmgURL = URL(string: "https://github.com/Guli-Joy/sidecar-auto/releases/download/\(tag)/\(assetName)") else {
+                    throw UpdateError.invalidRelease
                 }
                 let release = AppUpdateRelease(
                     version: version,
-                    releaseURL: payload.htmlURL,
-                    dmgURL: asset.browserDownloadURL,
-                    assetName: asset.name
+                    releaseURL: releaseURL,
+                    dmgURL: dmgURL.absoluteString,
+                    assetName: assetName
                 )
                 guard let self else { return }
                 if Self.isVersion(version, newerThan: currentVersion) {
@@ -519,17 +502,24 @@ final class SetupModel: ObservableObject {
     private enum UpdateError: LocalizedError {
         case invalidEndpoint
         case invalidRelease
-        case missingArm64Asset
         case server(Int)
 
         var errorDescription: String? {
             switch self {
             case .invalidEndpoint: return "更新地址无效"
             case .invalidRelease: return "Release 版本号无效"
-            case .missingArm64Asset: return "Release 没有 Apple Silicon DMG"
             case let .server(status): return status > 0 ? "GitHub 返回 HTTP \(status)" : "无法连接 GitHub"
             }
         }
+    }
+
+    private nonisolated static func releaseTag(from url: URL) -> String? {
+        let components = url.path.split(separator: "/", omittingEmptySubsequences: true)
+        guard let tagIndex = components.firstIndex(of: "tag"),
+              components.index(after: tagIndex) < components.endIndex else {
+            return nil
+        }
+        return String(components[components.index(after: tagIndex)])
     }
 
     private nonisolated static func normalizedVersion(_ raw: String) -> String {
