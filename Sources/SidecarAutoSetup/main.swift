@@ -2595,6 +2595,11 @@ private struct SetupView: View {
                 openWindow(id: "main")
                 DispatchQueue.main.async { NSApp.activate(ignoringOtherApps: true) }
             }
+            // A login-started app can hand off to RunningBoard while the
+            // window scene is still being created. Refresh once the settings
+            // view is visible so the login-item card reflects the live App
+            // process instead of the first startup probe.
+            model.refresh()
             if !hasSeenWizard { showingWizard = true }
         }
     }
