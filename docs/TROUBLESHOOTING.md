@@ -8,6 +8,26 @@
 tail -n 100 "$HOME/Library/Logs/sidecar-auto.log"
 ```
 
+### App 意外退出
+
+如果 macOS 显示“Sidecar Auto 设置助手意外退出”，先从最新 Release 重新下载 DMG，
+把新的 App 拖到“应用程序”并替换旧副本。较早的构建在读取辅助程序输出结束时可能被
+macOS 的 `FileHandle` 异常终止；当前构建会把该情况当作一次操作失败并保留诊断，
+不会退出整个设置助手。若仍有问题，可把最新的
+`~/Library/Logs/DiagnosticReports/SidecarAutoSetup-*.ips` 提供给维护者。
+
+### 连接时提示“找不到 sidecarctl”
+
+从“应用程序”打开设置助手，点击“安装 / 修复”，再点击“重新检查”。安装器会把
+`sidecarctl` 和显示检测程序复制到 `~/.local/bin/`。如果配置文件来自旧版本，其中
+`SIDECAR_BIN="$HOME/.local/bin/sidecarctl"` 这样的字面路径也会被当前版本兼容处理；
+无需把 `$HOME` 手动改成用户名。可以用只读诊断确认：
+
+```sh
+ls -l "$HOME/.local/bin/sidecarctl"
+"$HOME/.local/bin/sidecar-doctor.sh"
+```
+
 ## 常见结果
 
 ### `USB_IPAD_NOT_FOUND`

@@ -11,6 +11,9 @@
 - Added regression coverage for headless preparation with a physical display,
   an already-online helper, and the disabled configuration path.
 - Added an in-app GitHub Releases update checker and arm64 DMG downloader.
+- Fixed a macOS `FileHandle` output-reader race that could crash the setup app while
+  a helper process was finishing, and normalized legacy literal `$HOME` executable
+  paths so `sidecarctl` remains discoverable after upgrades.
 - Made login-after-start explicit and required for no-monitor mode; the
   environment check now treats it as a required prerequisite when the built-in
   virtual display is selected.

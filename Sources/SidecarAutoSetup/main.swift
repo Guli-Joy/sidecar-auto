@@ -2259,18 +2259,27 @@ final class SetupModel: ObservableObject {
         // prevents both pipe-buffer deadlocks and unbounded temporary-file
         // growth when a helper emits continuously.
         let outputPipe = Pipe()
+        let outputReadHandle = outputPipe.fileHandleForReading
         let outputLimit = 1_048_576
         let outputLock = NSLock()
         var captured = Data()
         let reader = DispatchWorkItem {
             while true {
-                let data = outputPipe.fileHandleForReading.readData(ofLength: 16_384)
-                if data.isEmpty { break }
-                outputLock.lock()
-                if captured.count < outputLimit {
-                    captured.append(data.prefix(outputLimit - captured.count))
+                do {
+                    guard let data = try outputReadHandle.read(upToCount: 16_384), !data.isEmpty else {
+                        break
+                    }
+                    outputLock.lock()
+                    if captured.count < outputLimit {
+                        captured.append(data.prefix(outputLimit - captured.count))
+                    }
+                    outputLock.unlock()
+                } catch {
+                    // The child may close its output unexpectedly. Treat that
+                    // as end-of-stream so a diagnostic helper cannot abort the
+                    // whole SwiftUI process while the UI is still usable.
+                    break
                 }
-                outputLock.unlock()
             }
         }
         DispatchQueue.global(qos: .utility).async(execute: reader)
@@ -2288,18 +2297,23 @@ final class SetupModel: ObservableObject {
                 pidURL = url
             }
             process.waitUntilExit()
-            outputPipe.fileHandleForReading.closeFile()
-            reader.cancel()
+            // Close the parent's write end first, then let the reader observe
+            // EOF and finish. Closing the read end while readData(ofLength:)
+            // is blocked raises an Objective-C exception on recent macOS and
+            // was the cause of the App's crash reports.
+            try? outputPipe.fileHandleForWriting.close()
             reader.wait()
+            try? outputReadHandle.close()
             outputLock.lock()
             let output = String(data: captured, encoding: .utf8) ?? ""
             outputLock.unlock()
             if let pidURL { try? FileManager.default.removeItem(at: pidURL) }
             return ProcessResult(status: process.terminationStatus, output: output)
         } catch {
-            outputPipe.fileHandleForReading.closeFile()
-            reader.cancel()
+            try? outputPipe.fileHandleForWriting.close()
             reader.wait()
+            try? outputReadHandle.close()
+            if let pidURL { try? FileManager.default.removeItem(at: pidURL) }
             return ProcessResult(status: 127, output: "无法启动 \(executable)：\(error.localizedDescription)\n")
         }
     }

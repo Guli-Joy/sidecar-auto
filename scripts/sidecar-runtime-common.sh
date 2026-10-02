@@ -47,7 +47,21 @@ config_load() {
         # guard so a future parser change cannot turn arbitrary names into
         # variable assignments.
         case ",$allowed_keys," in
-            *,"$key",*) printf -v "$key" '%s' "$value" ;;
+            *,"$key",*)
+                # Older generated configs stored executable paths as the
+                # literal string "$HOME/.local/bin/...".  The parser is
+                # intentionally non-evaluating, so expand only this exact
+                # home-directory spelling for known path settings.
+                case "$key" in
+                    IOREG_BIN|SIDECAR_BIN|SIDECAR_USB_DETECT_BIN|SIDECAR_BLUETOOTH_RADIO_BIN|BLUETOOTH_PROFILER_BIN|NETWORKSETUP_BIN|DEFAULTS_BIN|DISPLAY_STATE_BIN|BETTERDISPLAY_CLI|BETTERDISPLAY_APP|VIRTUAL_DISPLAY_HELPER|LOG_FILE|SOUND_START|SOUND_SUCCESS|SOUND_FAILURE)
+                        case "$value" in
+                            '$HOME/'*) value="$HOME/${value#'$HOME/'}" ;;
+                            '~/'*) value="$HOME/${value#'~/'}" ;;
+                        esac
+                        ;;
+                esac
+                printf -v "$key" '%s' "$value"
+                ;;
         esac
     done < <(/usr/bin/awk -v keys="$allowed_keys" '
         BEGIN {
