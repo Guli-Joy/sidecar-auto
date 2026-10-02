@@ -1,15 +1,15 @@
-# 发布设置助手
+# 发布 Sidecar Auto
 
-设置助手可以在没有 Xcode Command Line Tools 的用户 Mac 上运行，但普通用户发布
-包必须使用 Apple Developer ID 签名并完成公证。仓库只提交构建脚本和源代码，不提交
+仓库提供两种发布方式：免费开发版可以直接构建 DMG；需要减少 macOS 首次打开提示
+时，再使用 Developer ID 签名和 Apple 公证。仓库只提交构建脚本和源代码，不提交
 `.app`、DMG、证书或个人配置。
 
-## 本地构建
+## 免费 DMG
 
 在 macOS 和 Xcode Command Line Tools 已安装的维护机上运行：
 
 ```sh
-./packaging/build-sidecar-auto-app.sh --arch arm64,x86_64 --version 0.2.0 \
+./packaging/build-sidecar-auto-app.sh --arch arm64,x86_64 --version 1.0.0 \
   --output ./dist
 ./packaging/make-dmg.sh --app "./dist/Sidecar Auto Setup.app" --output ./dist
 ```
@@ -19,21 +19,23 @@
 脚本默认不签名，适合 CI 编译检查。`--host-only` 可以在不需要交叉编译时只构建
 当前架构。
 
-## 签名与公证
+生成 `dist/Sidecar-Auto-Setup.dmg` 后，可以把它和 `SHA256SUMS` 上传到 GitHub
+Release。首次打开若被 macOS 拦截，到“系统设置 → 隐私与安全性”允许打开即可。
+
+## 可选：签名与公证
 
 推荐使用仓库内的发布包装脚本，它会执行构建、嵌套代码签名、校验、notarytool
 公证、stapler、Gatekeeper 检查、DMG 和 SHA256 文件生成：
 
 ```sh
 ./packaging/release-sidecar-auto.sh \
-  --version 0.3.2 \
+  --version 1.0.0 \
   --identity "Developer ID Application: Example Company (TEAMID)" \
   --keychain-profile "sidecar-auto-notary"
 ```
 
 脚本不会把证书、Apple Account 或公证令牌写入仓库；`notarytool` 只读取你已经
-保存到钥匙串的 profile。没有 Developer ID 或钥匙串 profile 时不要把未签名包
-发布给普通用户。
+保存到钥匙串的 profile。没有这些凭据时，使用上面的免费 DMG 流程即可。
 
 使用 Developer ID Application 身份构建：
 
@@ -41,7 +43,7 @@
 ./packaging/build-sidecar-auto-app.sh \
   --arch arm64,x86_64 \
   --sign "Developer ID Application: Example Company (TEAMID)" \
-  --version 0.2.0
+  --version 1.0.0
 
 codesign --verify --deep --strict --verbose=2 "dist/Sidecar Auto Setup.app"
 ditto -c -k --keepParent "dist/Sidecar Auto Setup.app" "dist/Sidecar-Auto-Setup.zip"
@@ -54,8 +56,7 @@ shasum -a 256 dist/Sidecar-Auto-Setup.dmg > dist/SHA256SUMS
 ```
 
 签名时先签 App 内的 Mach-O，再签 App 本身；构建脚本已经按这个顺序处理。签名身份、
-公证凭据和 Apple Account 令牌只能放在 CI secret 或维护机钥匙串中。没有证书时不要
-把未签名构建宣传成普通用户的正式安装包；Gatekeeper 可能阻止或显示开发者来源提示。
+公证凭据和 Apple Account 令牌只能放在 CI secret 或维护机钥匙串中。
 
 ## 发布前检查
 

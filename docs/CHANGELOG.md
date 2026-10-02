@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - 2026-10-02
+## 1.0.0 - 2026-10-03
 
 - Consolidated shared runtime helpers for connection, disconnection and the
   post-login announcement. Logs now rotate at about 1 MiB, and the bundled

@@ -1,61 +1,114 @@
 # Sidecar Auto
 
-Sidecar Auto is a macOS one-shot controller for an iPad used as an Apple
-Sidecar display. A macOS Shortcut invokes the controller; it detects a unique
-iPad USB data device and requests `ForceUSB`, or prepares the Mac radios and
-requests `ForceAWDL` when no iPad cable is present.
+> One-shot Sidecar connections between a Mac and an iPad, triggered from a macOS Shortcut.
+
+[![CI](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml/badge.svg)](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/Guli-Joy/sidecar-auto?display_name=tag)](https://github.com/Guli-Joy/sidecar-auto/releases)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-111827)](https://github.com/Guli-Joy/sidecar-auto#requirements)
+[![License](https://img.shields.io/badge/license-MIT-2563eb)](../LICENSE)
+
+Sidecar Auto is built for people who use an iPad as a Mac display, especially Mac mini setups without a permanent monitor. It checks the current state, chooses USB or direct wireless transport, prepares a headless display when needed, and verifies that the Sidecar picture is actually online.
 
 ## What it does
 
-- keeps a physical monitor path as a normal extended-display setup;
-- creates and verifies a fixed built-in virtual screen for a headless Mac, with
-  BetterDisplay available as an advanced provider;
-- refuses unknown state, ambiguous iPad names, and another active iPad session;
-- plays progress/success/failure sounds and optional Chinese speech;
-- performs one connection request and verifies both Sidecar state and an online
-  display; it does not retry forever or seize a shared iPad in the background.
+| Situation | Behavior |
+| --- | --- |
+| iPad data cable connected | Detects the unique USB iPad and requests `ForceUSB`. |
+| No cable connected | Prepares Wi‑Fi, Bluetooth, and Handoff, then requests `ForceAWDL`. |
+| No physical monitor | Starts the built-in fixed virtual screen or an optional BetterDisplay backend. |
+| Repeated connection request | Verifies the existing session instead of taking over another iPad. |
 
-## Install
+Every action is explicit, bounded, and single-shot. The controller does not retry forever or connect in the background.
 
-macOS 13+ and Xcode Command Line Tools are required. Copy the repository to the
-Mac, then run:
+## Download
+
+Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The first stable release is [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0).
+
+If macOS blocks the first launch, open **System Settings → Privacy & Security** and allow the app to open. Depending on the macOS version, the control may be shown as **Allow applications from anywhere** or **Open Anyway**.
+
+For a source installation, macOS 13+ and Xcode Command Line Tools are required:
 
 ```sh
+git clone https://github.com/Guli-Joy/sidecar-auto.git
+cd sidecar-auto
 ./installer/install-sidecar-auto.sh
 ```
 
-The installer builds `sidecarctl`, the display probe, the Bluetooth helper and
-the resident `sidecar-virtual-display` helper,
-then installs them under `~/.local/bin`. It does not install BetterDisplay,
-create Shortcuts, grant TCC permissions or change FileVault settings.
+## Quick start
 
-Create a macOS Shortcut with a **Run Shell Script** action:
+1. Open `Sidecar Auto Setup.app` and click **Install / Repair**.
+2. Click **Refresh** and confirm the target iPad and display checks.
+3. Use **Configure Shortcuts** and accept the macOS import prompts.
+4. Run **Connect Sidecar** from Shortcuts.
+5. Run **Disconnect Sidecar** when the session should end.
+
+The command-line entries are:
 
 ```sh
-exec "$HOME/.local/bin/sidecar-connect-once.sh" auto
+"$HOME/.local/bin/sidecar-connect-once.sh" auto
+"$HOME/.local/bin/sidecar-disconnect-once.sh"
 ```
 
-Use the explicit `wired` or `wireless` arguments for troubleshooting. See the
-[Chinese guide](../README.md), [architecture](ARCHITECTURE.md), and
-[troubleshooting](TROUBLESHOOTING.md) for the complete setup.
+Use `wired` or `wireless` instead of `auto` when troubleshooting a specific transport.
 
-The repository keeps the two install entry points in `installer/`. Runtime shell
-controllers live in `scripts/`, native helper sources in `Sources/`, the
-upstream-derived CLI in `vendor/sidecarctl/`, and the LaunchAgent template in
-`launchd/`. Installed command names under `~/.local/bin/` remain unchanged.
+## Requirements
 
-## Limitations
+- macOS 13 or later.
+- A Sidecar-compatible Mac and iPad using the same Apple Account with two-factor authentication.
+- A trusted, data-capable USB cable for wired mode.
+- Wi‑Fi, Bluetooth, and Handoff enabled on both devices for wireless mode.
+- An awake and unlocked iPad. Sidecar cannot create a screen session at the login or FileVault unlock screen.
 
-Sidecar Auto calls Apple's private `SidecarCore` API. The built-in virtual
-screen also uses Apple's undocumented `SLVirtualDisplay`/`CGVirtualDisplay`
-runtime classes and must remain held by a user-session helper; a helper exit
-removes the screen. It is fixed to one 1920x1080/60Hz screen and can break
-after a macOS update. BetterDisplay remains available for advanced layouts.
-The iPad must be awake and unlocked. Wireless direct mode still
-requires Wi-Fi, Bluetooth, Handoff, the same Apple Account and Apple's
-Continuity conditions. FileVault and the login screen cannot be automated by a
-LaunchAgent. BetterDisplay is a separate product and headless CLI operations
-may require its Pro/trial entitlement.
+## Headless mode
 
-The automation scripts are MIT licensed. The retained `sidecarctl` source in
-`vendor/sidecarctl/` carries the upstream MIT notice; see [NOTICE.md](NOTICE.md).
+The default `auto` provider prefers the built-in 1920×1080, 60 Hz virtual screen. It does not require BetterDisplay, but it relies on undocumented macOS virtual-display APIs.
+
+Choose BetterDisplay when you need HiDPI, additional resolutions, or advanced layouts:
+
+```sh
+VIRTUAL_DISPLAY_BACKEND="betterdisplay"
+VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
+```
+
+Supported providers are `auto`, `builtin`, and `betterdisplay`. Failed or cancelled operations clean up only the virtual display created by that operation.
+
+## Configuration
+
+The installer creates `~/.config/sidecar-auto/config` and preserves an existing file:
+
+```sh
+IPAD_NAME="iPad"
+# IPAD_USB_SERIAL_NUMBER=""
+AUTO_ENABLE_HANDOFF=1
+VIRTUAL_DISPLAY_BACKEND="auto"
+VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
+```
+
+Runtime scripts accept only allowlisted fields. The file must be owned by the current user and must not be writable by the group or other users; its contents are never executed as shell code.
+
+## Diagnostics
+
+These commands are read-only:
+
+```sh
+"$HOME/.local/bin/sidecar-doctor.sh"
+"$HOME/.local/bin/sidecarctl" snapshot
+```
+
+Logs stay in `~/Library/Logs/sidecar-auto.log` and rotate automatically. When multiple iPads are connected, set both the exact `IPAD_NAME` and the target `IPAD_USB_SERIAL_NUMBER`.
+
+## Documentation
+
+- [App guide](APP_GUIDE.md): download, setup, permissions, and daily use.
+- [Troubleshooting](TROUBLESHOOTING.md): USB, wireless, display, and permission issues.
+- [Architecture](ARCHITECTURE.md): controllers, helpers, installer, and display providers.
+- [Security model](SECURITY_MODEL.md): local data, configuration boundaries, and macOS permissions.
+- [Testing](TESTING.md): automated checks and real-device validation boundaries.
+- [Release guide](RELEASE.md): App, DMG, signing, notarization, and checksums.
+- [Changelog](CHANGELOG.md): version history.
+
+## Limitations and privacy
+
+Sidecar Auto calls Apple's private `SidecarCore` API. The built-in virtual screen uses undocumented macOS APIs and may need updates after a system release. The project collects no telemetry, uploads no configuration or logs, and does not bypass BetterDisplay licensing, TCC permissions, FileVault, or macOS security controls.
+
+The automation code is MIT licensed. The retained upstream `sidecarctl` source keeps its own MIT notice; see [NOTICE.md](NOTICE.md).
