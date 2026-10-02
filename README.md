@@ -88,6 +88,8 @@ IPAD_NAME="iPad"
 # 多台 iPad 同时插线时填写目标 USB 序列号。
 # IPAD_USB_SERIAL_NUMBER=""
 AUTO_ENABLE_HANDOFF=1
+# 登录进入 macOS 桌面后静默启动 App；无实体显示器时准备虚拟屏。
+AUTO_START_HEADLESS_DISPLAY=1
 VIRTUAL_DISPLAY_BACKEND="auto"
 VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 ```
@@ -145,6 +147,7 @@ bash tests/test_usb_detector.sh
 bash tests/test_connect_controller.sh
 bash tests/test_connect_config_validation.sh
 bash tests/test_recovery_timeout.sh
+bash tests/test_headless_display.sh
 ./installer/install-sidecar-auto.sh --build-only
 ```
 

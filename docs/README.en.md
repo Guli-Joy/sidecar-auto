@@ -80,6 +80,8 @@ The installer creates `~/.config/sidecar-auto/config` and preserves an existing 
 IPAD_NAME="iPad"
 # IPAD_USB_SERIAL_NUMBER=""
 AUTO_ENABLE_HANDOFF=1
+# Start the app quietly after login; prepare a virtual screen when headless.
+AUTO_START_HEADLESS_DISPLAY=1
 VIRTUAL_DISPLAY_BACKEND="auto"
 VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 ```

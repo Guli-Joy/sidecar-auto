@@ -44,6 +44,20 @@ printf '%s\n' 'IPAD_USB_SERIAL_NUMBER="在此填写序列号"' >> "$HOME/.config
 
 若使用内置方案，运行 `sidecar-virtual-display status`；如果 helper 无法创建或系统更新后不再支持 SPI，把配置改为 `VIRTUAL_DISPLAY_BACKEND="betterdisplay"` 并按 BetterDisplay 的 CLI、虚拟屏和 Pro/试用提示处理。脚本会验证屏幕确实在线，失败时播报失败并停止。
 
+### 登录后没有自动准备虚拟屏
+
+打开 Sidecar Auto 的“连接设置 → 无显示器虚拟屏”，确认“登录后静默启动 Sidecar Auto”
+已开启并点击“保存设置”。然后检查运行时是否完整安装；也可以在终端确认登录项和日志：
+
+```sh
+launchctl print "gui/$(id -u)/com.sidecarauto.setup"
+tail -n 80 "$HOME/Library/Logs/sidecar-auto-login.out.log"
+tail -n 80 "$HOME/Library/Logs/sidecar-auto.log"
+```
+
+登录项只负责启动 App；虚拟屏准备由 App 启动后的内置脚本完成。如果选择了 BetterDisplay，
+请在 BetterDisplay 中开启它自己的登录启动和虚拟屏设置。
+
 ## 安全恢复
 
 如果一次操作被中断，先断开已存在的 Sidecar 会话；如果你曾手动配置过后台重连服务，也请先停止它：

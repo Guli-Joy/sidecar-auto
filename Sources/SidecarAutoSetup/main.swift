@@ -9,8 +9,18 @@ final class SidecarAutoAppDelegate: NSObject, NSApplicationDelegate {
     /// by the menu-bar scene so reopening still works after the last window was
     /// closed and the WindowGroup has released its NSWindow instance.
     private var openMainWindowAction: (() -> Void)?
+    private let launchedForLogin = ProcessInfo.processInfo.environment["SIDECAR_AUTO_LOGIN_START"] == "1"
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if launchedForLogin {
+            // A login agent starts the app only to prepare a usable display
+            // session. Keep it out of the Dock and do not steal focus from
+            // the user's desktop; the menu-bar item remains available.
+            NSApp.setActivationPolicy(.accessory)
+            DispatchQueue.main.async {
+                NSApp.hide(nil)
+            }
+        }
         // Closing the settings window must not terminate the process: the
         // menu-bar item is the recovery path for headless use.
         NSApp.applicationIconImage = NSImage(named: NSImage.applicationIconName)
@@ -138,7 +148,7 @@ enum CheckState: Sendable, Equatable {
 
 enum CheckAction: Sendable, Equatable {
     case install, refresh, bluetooth, handoff
-    case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions, loginAgent
+    case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions, loginAgent, headlessAgent
     case restartApp, openApplicationsFolder
 }
 
@@ -294,6 +304,7 @@ struct SetupConfig: Sendable {
     var iPadName = "iPad"
     var usbSerial = ""
     var autoEnableHandoff = true
+    var autoStartHeadlessDisplay = true
     var virtualDisplayName = "SidecarHeadlessFallback"
     var virtualDisplayBackend: VirtualDisplayBackend = .auto
 }
@@ -318,6 +329,7 @@ final class SetupModel: ObservableObject {
     @Published var isCancelRequested = false
     @Published var isRequestingPermission = false
     @Published var isManagingLoginAgent = false
+    @Published var isManagingHeadlessAgent = false
     @Published var isScanningIPad = false
     @Published var scanMessage = ""
     @Published var usbCandidates: [USBIPadCandidate] = []
@@ -332,6 +344,7 @@ final class SetupModel: ObservableObject {
     private var operationLogStartOffset: UInt64 = 0
     private var lastObservedLogSize: UInt64 = 0
     private var operationTask: Task<ProcessResult, Never>?
+    private var headlessStartTask: Task<Void, Never>?
     private var activeOperationExecutable = ""
 
     init() {
@@ -348,9 +361,29 @@ final class SetupModel: ObservableObject {
             }
         }
         refresh()
+        startHeadlessDisplayAfterLaunch()
+    }
+
+    /// The login agent launches this app once per user session. Preparing the
+    /// fallback here keeps launchd responsible only for starting the app,
+    /// while the app owns the virtual-display policy and diagnostics.
+    private func startHeadlessDisplayAfterLaunch() {
+        guard config.autoStartHeadlessDisplay,
+              config.virtualDisplayBackend != .betterdisplay else { return }
+        let script = Self.headlessDisplayScriptURL()
+        guard fileManager.isExecutableFile(atPath: script) else { return }
+        headlessStartTask?.cancel()
+        headlessStartTask = Task.detached(priority: .userInitiated) {
+            // WindowServer may still be bringing up the Aqua session when the
+            // login agent fires. Give it a short settling window first.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard !Task.isCancelled else { return }
+            _ = Self.execute(executable: script, arguments: [])
+        }
     }
 
     deinit {
+        headlessStartTask?.cancel()
         if let activeObserver {
             NotificationCenter.default.removeObserver(activeObserver)
         }
@@ -465,8 +498,26 @@ final class SetupModel: ObservableObject {
         }
         do {
             try writeConfig(config)
-            message = "配置已保存到 ~/.config/sidecar-auto/config。"
-            refresh()
+            let shouldEnableHeadless = config.autoStartHeadlessDisplay &&
+                config.virtualDisplayBackend != .betterdisplay
+            let worker = Task.detached(priority: .userInitiated) {
+                Self.setHeadlessAgent(enabled: shouldEnableHeadless)
+            }
+            Task { @MainActor [weak self] in
+                let result = await worker.value
+                guard let self else { return }
+                if result.status == 0 {
+                    if shouldEnableHeadless {
+                        self.startHeadlessDisplayAfterLaunch()
+                    }
+                    self.message = shouldEnableHeadless
+                        ? "配置已保存，并已开启 Sidecar Auto 登录后静默启动。"
+                        : "配置已保存，并已停用登录后静默启动。"
+                } else {
+                    self.message = "配置已保存，但登录后静默启动设置失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+                }
+                self.refresh()
+            }
         } catch {
             message = "配置保存失败：\(error.localizedDescription)"
         }
@@ -630,6 +681,8 @@ final class SetupModel: ObservableObject {
             message = "已打开“用户与群组”。请查看“自动登录为”；文件保险箱开启时 macOS 会禁用此选项。"
         case .loginAgent:
             toggleLoginAgent()
+        case .headlessAgent:
+            toggleHeadlessAgent()
         }
     }
 
@@ -1126,10 +1179,11 @@ final class SetupModel: ObservableObject {
             let result = await worker.value
             self?.appendInstallerLog(result.output)
             self?.isInstalling = false
-            self?.message = result.status == 0
-                ? "安装完成。请继续完成下面的权限和快捷指令步骤。"
-                : "安装失败，请查看下方日志并按提示处理。"
-            if result.status == 0 { self?.refresh() }
+            if result.status == 0 {
+            self?.syncHeadlessAgentAfterInstall()
+            } else {
+                self?.message = "安装失败，请查看下方日志并按提示处理。"
+            }
         }
     }
 
@@ -1182,6 +1236,7 @@ final class SetupModel: ObservableObject {
             case "IPAD_NAME": value.iPadName = parsed
             case "IPAD_USB_SERIAL_NUMBER": value.usbSerial = parsed
             case "AUTO_ENABLE_HANDOFF": value.autoEnableHandoff = parsed != "0"
+            case "AUTO_START_HEADLESS_DISPLAY": value.autoStartHeadlessDisplay = parsed != "0"
             case "VIRTUAL_DISPLAY_NAME": value.virtualDisplayName = parsed
             case "VIRTUAL_DISPLAY_BACKEND": value.virtualDisplayBackend = VirtualDisplayBackend(rawValue: parsed) ?? .auto
             default: break
@@ -1245,6 +1300,7 @@ final class SetupModel: ObservableObject {
             "IPAD_NAME": shellQuote(value.iPadName),
             "IPAD_USB_SERIAL_NUMBER": value.usbSerial.isEmpty ? "" : shellQuote(value.usbSerial),
             "AUTO_ENABLE_HANDOFF": value.autoEnableHandoff ? "1" : "0",
+            "AUTO_START_HEADLESS_DISPLAY": value.autoStartHeadlessDisplay ? "1" : "0",
             "VIRTUAL_DISPLAY_NAME": shellQuote(value.virtualDisplayName),
             "VIRTUAL_DISPLAY_BACKEND": shellQuote(value.virtualDisplayBackend.rawValue)
         ]
@@ -1264,6 +1320,7 @@ final class SetupModel: ObservableObject {
                 "IPAD_NAME=\(shellQuote(value.iPadName))",
                 "IPAD_USB_SERIAL_NUMBER=\(value.usbSerial.isEmpty ? "" : shellQuote(value.usbSerial))",
                 "AUTO_ENABLE_HANDOFF=\(value.autoEnableHandoff ? "1" : "0")",
+                "AUTO_START_HEADLESS_DISPLAY=\(value.autoStartHeadlessDisplay ? "1" : "0")",
                 "VIRTUAL_DISPLAY_NAME=\(shellQuote(value.virtualDisplayName))",
                 "VIRTUAL_DISPLAY_BACKEND=\(shellQuote(value.virtualDisplayBackend.rawValue))"
             ]
@@ -1327,7 +1384,10 @@ final class SetupModel: ObservableObject {
         let shortcuts = shortcutsStatus()
         let fileVault = fileVaultStatus()
         let autoLogin = autoLoginStatus(fileVaultEnabled: fileVault.enabled)
-        let loginAgent = loginAgentStatus()
+        let headlessAgent = headlessAgentStatus(config: config)
+        let headlessAction: CheckAction? = !Bundle.main.bundlePath.hasPrefix("/Applications/")
+            ? .openApplicationsFolder
+            : config.virtualDisplayBackend == .betterdisplay ? .betterDisplay : .headlessAgent
 
         return [
             CheckItem(id: "mac", title: "macOS 版本", detail: macOK
@@ -1393,9 +1453,9 @@ final class SetupModel: ObservableObject {
             CheckItem(id: "autologin", title: "macOS 自动登录", detail: autoLogin.detail,
                       state: autoLogin.state, action: .loginOptions, actionTitle: "查看自动登录选项",
                       required: false),
-            CheckItem(id: "login-agent", title: "登录后桌面提示", detail: loginAgent.detail,
-                      state: loginAgent.ok ? .good : .optional, action: .loginAgent,
-                      actionTitle: loginAgent.ok ? "停用提示" : "开启提示", required: false)
+            CheckItem(id: "headless-agent", title: "登录后静默启动 App", detail: headlessAgent.detail,
+                      state: headlessAgent.ok ? .good : .optional, action: headlessAction,
+                      actionTitle: headlessAgent.actionTitle, required: false)
         ]
     }
 
@@ -1472,6 +1532,7 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
+            "sidecar-headless-display.sh",
             "sidecar-doctor.sh",
             "install-sidecar-shortcuts.sh"
         ]
@@ -1780,6 +1841,171 @@ final class SetupModel: ObservableObject {
                 "可选安全设置：自动登录由 macOS 的“用户与群组”设置、账户密码和组织策略决定；App 只能打开设置页，不能保存或输入密码。")
     }
 
+    // The login item starts this app itself. The app then prepares the
+    // virtual display, so launchd has one small responsibility and there is
+    // no second independent display agent to drift out of sync.
+    private nonisolated static let headlessAgentLabel = "com.sidecarauto.setup"
+    private nonisolated static let legacyHeadlessAgentLabel = "com.sidecarauto.headless-display"
+
+    private nonisolated static func headlessAgentURL() -> URL {
+        URL(fileURLWithPath: "\(NSHomeDirectory())/Library/LaunchAgents/\(headlessAgentLabel).plist")
+    }
+
+    private nonisolated static func legacyHeadlessAgentURL() -> URL {
+        URL(fileURLWithPath: "\(NSHomeDirectory())/Library/LaunchAgents/\(legacyHeadlessAgentLabel).plist")
+    }
+
+    private nonisolated static func headlessAgentTarget() -> String {
+        "gui/\(getuid())/\(headlessAgentLabel)"
+    }
+
+    private nonisolated static func legacyHeadlessAgentTarget() -> String {
+        "gui/\(getuid())/\(legacyHeadlessAgentLabel)"
+    }
+
+    private nonisolated static func headlessDisplayScriptURL() -> String {
+        "\(NSHomeDirectory())/.local/bin/sidecar-headless-display.sh"
+    }
+
+    private nonisolated static func appExecutableURL() -> String {
+        if let executableURL = Bundle.main.executableURL {
+            return executableURL.path
+        }
+        return Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/SidecarAutoSetup").path
+    }
+
+    private nonisolated static func headlessAgentIsLoaded() -> Bool {
+        execute(executable: "/bin/launchctl", arguments: ["print", headlessAgentTarget()]).status == 0
+    }
+
+    private nonisolated static func headlessAgentStatus(config: SetupConfig) ->
+        (ok: Bool, detail: String, actionTitle: String) {
+        guard config.virtualDisplayBackend != .betterdisplay else {
+            return (false,
+                    "当前选择 BetterDisplay；项目内置虚拟屏自动准备不适用，请在 BetterDisplay 中设置登录启动。",
+                    "打开 BetterDisplay")
+        }
+        guard Bundle.main.bundlePath.hasPrefix("/Applications/") else {
+            return (false,
+                    "请先把 Sidecar Auto Setup.app 拖到“应用程序”，再开启登录后静默启动；登录项不能指向 DMG 或临时副本。",
+                    "打开应用程序")
+        }
+        guard FileManager.default.isExecutableFile(atPath: "\(NSHomeDirectory())/.local/bin/sidecar-virtual-display") else {
+            return (false, "尚未安装项目内置虚拟屏工具；请先点击“安装 / 修复工具”。", "安装 / 修复工具")
+        }
+        guard FileManager.default.isExecutableFile(atPath: headlessDisplayScriptURL()) else {
+            return (false, "尚未安装登录后虚拟屏脚本；请先点击“安装 / 修复工具”。", "安装 / 修复工具")
+        }
+        if !config.autoStartHeadlessDisplay {
+            return (false, "未开启；登录后不会静默启动 Sidecar Auto，也不会在无实体显示器时准备虚拟屏。", "开启静默启动")
+        }
+        if headlessAgentIsLoaded() {
+            return (true, "已开启：登录进入桌面后会静默启动 Sidecar Auto；没有实体显示器时由 App 准备项目内置虚拟屏，不会自动连接或断开 iPad。", "停用静默启动")
+        }
+        if FileManager.default.fileExists(atPath: headlessAgentURL().path) {
+            return (false, "已创建 Sidecar Auto 登录项但当前未加载；点击按钮可重新加载。", "重新加载")
+        }
+        return (false, "已开启配置但 Sidecar Auto 登录项尚未加载；点击按钮启用静默启动。", "开启静默启动")
+    }
+
+    private nonisolated static func headlessAgentPlist() -> Data? {
+        let logBase = "\(NSHomeDirectory())/Library/Logs/sidecar-auto-login"
+        let object: [String: Any] = [
+            "Label": headlessAgentLabel,
+            "ProgramArguments": [appExecutableURL()],
+            "EnvironmentVariables": ["SIDECAR_AUTO_LOGIN_START": "1"],
+            "RunAtLoad": true,
+            "ProcessType": "Interactive",
+            "LimitLoadToSessionType": "Aqua",
+            "StandardOutPath": "\(logBase).out.log",
+            "StandardErrorPath": "\(logBase).err.log"
+        ]
+        return try? PropertyListSerialization.data(fromPropertyList: object, format: .xml, options: 0)
+    }
+
+    private nonisolated static func setHeadlessAgent(enabled: Bool) -> ProcessResult {
+        let url = headlessAgentURL()
+        let manager = FileManager.default
+        do {
+            try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if enabled {
+                guard manager.isExecutableFile(atPath: appExecutableURL()),
+                      manager.isExecutableFile(atPath: headlessDisplayScriptURL()),
+                      manager.isExecutableFile(atPath: "\(NSHomeDirectory())/.local/bin/sidecar-virtual-display"),
+                      let data = headlessAgentPlist() else {
+                    return ProcessResult(status: 127, output: "找不到 Sidecar Auto 或虚拟屏运行时，请先完成安装 / 修复工具。")
+                }
+                try data.write(to: url, options: .atomic)
+                try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                _ = execute(executable: "/bin/launchctl", arguments: ["bootout", headlessAgentTarget()])
+                _ = execute(executable: "/bin/launchctl", arguments: ["bootout", legacyHeadlessAgentTarget()])
+                try? manager.removeItem(at: legacyHeadlessAgentURL())
+                // Older development builds exposed a separate spoken
+                // login-ready agent. Remove it when the silent app startup is
+                // enabled so two login items cannot compete for the session.
+                _ = execute(executable: "/bin/launchctl", arguments: ["bootout", loginAgentTarget()])
+                try? manager.removeItem(at: loginAgentURL())
+                let loaded = execute(executable: "/bin/launchctl", arguments: ["bootstrap", "gui/\(getuid())", url.path])
+                guard loaded.status == 0 else {
+                    return ProcessResult(status: loaded.status, output: loaded.output.isEmpty ? "launchctl bootstrap 失败" : loaded.output)
+                }
+                return ProcessResult(status: 0, output: "Sidecar Auto 登录后静默启动已加载。")
+            }
+            _ = execute(executable: "/bin/launchctl", arguments: ["bootout", headlessAgentTarget()])
+            _ = execute(executable: "/bin/launchctl", arguments: ["bootout", legacyHeadlessAgentTarget()])
+            try? manager.removeItem(at: url)
+            try? manager.removeItem(at: legacyHeadlessAgentURL())
+            return ProcessResult(status: 0, output: "Sidecar Auto 登录后静默启动已停用。")
+        } catch {
+            return ProcessResult(status: 1, output: error.localizedDescription)
+        }
+    }
+
+    private func syncHeadlessAgentAfterInstall() {
+        let shouldEnable = config.autoStartHeadlessDisplay && config.virtualDisplayBackend != .betterdisplay
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.setHeadlessAgent(enabled: shouldEnable)
+        }
+        Task { @MainActor [weak self] in
+            let result = await worker.value
+            guard let self else { return }
+            self.message = result.status == 0
+                ? (shouldEnable ? "安装完成，并已开启 Sidecar Auto 登录后静默启动。" : "安装完成；当前虚拟屏方案不需要项目内置登录启动。")
+                : "安装完成，但登录后静默启动设置失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+            if result.status == 0, shouldEnable {
+                self.startHeadlessDisplayAfterLaunch()
+            }
+            self.refresh()
+        }
+    }
+
+    private func toggleHeadlessAgent() {
+        guard !isManagingHeadlessAgent else { return }
+        isManagingHeadlessAgent = true
+        let enable = !Self.headlessAgentIsLoaded()
+        config.autoStartHeadlessDisplay = enable
+        do {
+            try writeConfig(config)
+        } catch {
+            isManagingHeadlessAgent = false
+            message = "自动准备设置保存失败：\(error.localizedDescription)"
+            return
+        }
+        let worker = Task.detached(priority: .userInitiated) {
+            Self.setHeadlessAgent(enabled: enable)
+        }
+        Task { @MainActor [weak self] in
+            let result = await worker.value
+            guard let self else { return }
+            self.isManagingHeadlessAgent = false
+            self.message = result.status == 0
+                ? (enable ? "已开启 Sidecar Auto 登录后静默启动。没有实体显示器时，App 登录后会先创建虚拟屏，但不会自动连接 iPad。"
+                          : "已停用 Sidecar Auto 登录后静默启动。")
+                : "登录后静默启动设置失败：\(result.output.trimmingCharacters(in: .whitespacesAndNewlines))"
+            self.refresh()
+        }
+    }
+
     private nonisolated static let loginAgentLabel = "com.sidecarauto.login-ready"
 
     private nonisolated static func loginAgentURL() -> URL {
@@ -1935,6 +2161,7 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
+            "sidecar-headless-display.sh",
             "sidecar-doctor.sh",
             "install-sidecar-shortcuts.sh"
         ]
@@ -1964,6 +2191,7 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
+            "sidecar-headless-display.sh",
             "sidecar-doctor.sh",
             "install-sidecar-shortcuts.sh"
         ]
@@ -2329,6 +2557,9 @@ private struct SetupView: View {
                     }
                     Text("项目内置方案固定为 1920×1080、60Hz；BetterDisplay 支持更多分辨率和布局参数。内置方案依赖 macOS 的系统接口，系统升级后如遇兼容问题可切换方案。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Toggle("登录后静默启动 Sidecar Auto（推荐）", isOn: $model.config.autoStartHeadlessDisplay)
+                    Text("开启后，进入 macOS 桌面时会静默启动本 App；没有实体显示器时，App 会先创建项目内置虚拟屏，让 iPad 能作为主屏使用。它不会自动连接或断开 iPad，也不需要辅助功能或屏幕录制权限。")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             Panel {
@@ -2371,7 +2602,7 @@ private struct SetupView: View {
                         }
                         securitySettingsPanel
                         betterDisplayInspectionPanel
-                        loginAgentPanel
+                        headlessAgentPanel
                     }
                     .padding(.top, 8)
                 } label: {
@@ -2502,21 +2733,21 @@ private struct SetupView: View {
         }
     }
 
-    private var loginAgentPanel: some View {
+    private var headlessAgentPanel: some View {
         Panel {
-            PanelTitle(title: "登录后提示", subtitle: "可选；只播报桌面已准备好，不会自动连接 Sidecar。", symbol: "power.circle")
-            let loginAgent = model.checks.first(where: { $0.id == "login-agent" })
+            PanelTitle(title: "登录后静默启动", subtitle: "登录时启动 App，由 App 准备虚拟屏，不会自动连接 iPad。", symbol: "display.2")
+            let headlessAgent = model.checks.first(where: { $0.id == "headless-agent" })
             HStack(alignment: .top, spacing: 12) {
-                Text(loginAgent?.detail ?? "正在读取登录项状态……")
+                Text(headlessAgent?.detail ?? "正在读取登录项状态……")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Spacer(minLength: 8)
-                if let loginAgent, let action = loginAgent.action {
-                    Button(model.isManagingLoginAgent ? "处理中…" : (loginAgent.state == .good ? "停用提示" : "开启提示")) {
+                if let headlessAgent, let action = headlessAgent.action {
+                    Button(model.isManagingHeadlessAgent ? "处理中…" : (headlessAgent.actionTitle ?? "开启静默启动")) {
                         model.perform(action)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(model.isManagingLoginAgent || model.isInstalling || model.isOperating)
+                    .disabled(model.isManagingHeadlessAgent || model.isInstalling || model.isOperating)
                 }
             }
         }

@@ -15,6 +15,8 @@ CI 只做不会占用用户设备的检查：
 - 一次性连接控制器的安全集成测试；使用伪造的 Sidecar、显示拓扑、USB 和无线
   辅助程序，覆盖有线选择、无线前置、多个 iPad 拒绝误连以及锁目录清理，不会
   发起真实连接。
+- 无显示器登录准备脚本测试；使用伪造显示状态和虚拟屏 helper，覆盖自动准备、
+  已有实体显示器和配置关闭三条路径。
 
 CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷指令。
 
@@ -24,6 +26,7 @@ CI 不会调用 `sidecarctl connect`、BetterDisplay 的写操作或真实快捷
 bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh
 bash ./tests/test_usb_detector.sh
 bash ./tests/test_connect_controller.sh
+bash ./tests/test_headless_display.sh
 ./installer/install-sidecar-auto.sh --build-only
 ./packaging/build-sidecar-auto-app.sh --host-only --output "$(mktemp -d)"
 ```

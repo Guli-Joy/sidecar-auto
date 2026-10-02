@@ -4,6 +4,8 @@
 IPAD_NAME="iPad"
 # IPAD_USB_SERIAL_NUMBER=""
 AUTO_ENABLE_HANDOFF=1
+# 登录进入 macOS 桌面后静默启动 Sidecar Auto；无实体显示器时准备虚拟屏。
+AUTO_START_HEADLESS_DISPLAY=1
 # Headless virtual-screen provider. `auto` prefers the built-in fixed screen
 # and falls back to BetterDisplay when the macOS private API is unavailable.
 # Use `builtin` to avoid BetterDisplay entirely, or `betterdisplay` for its

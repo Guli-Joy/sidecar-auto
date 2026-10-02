@@ -1,6 +1,19 @@
 # Changelog
 
-## 1.0.0 - 2026-10-03
+## 1.0.1 - 2026-10-02
+
+- Simplified headless startup to one per-user login item that silently starts
+  `Sidecar Auto Setup.app`; the app then prepares the built-in virtual display
+  after the desktop session is ready.
+- Added a guarded “登录后静默启动 Sidecar Auto” setting, cleanup for the
+  previous development login item, and a check that the app is installed in
+  `/Applications` before enabling launch-on-login.
+- Added regression coverage for headless preparation with a physical display,
+  an already-online helper, and the disabled configuration path.
+- Updated the user guide, English overview, configuration examples, and
+  troubleshooting steps to describe the single-app startup flow.
+
+## 1.0.0 - 2026-10-02
 
 - Consolidated shared runtime helpers for connection, disconnection and the
   post-login announcement. Logs now rotate at about 1 MiB, and the bundled

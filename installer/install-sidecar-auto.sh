@@ -77,6 +77,7 @@ restore_installation() {
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
         if [ -e "$INSTALL_BACKUP/$name" ] || [ -L "$INSTALL_BACKUP/$name" ]; then
@@ -154,6 +155,7 @@ check_sources() {
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
         "$SCRIPT_ROOT/sidecar-login-ready.sh" \
+        "$SCRIPT_ROOT/sidecar-headless-display.sh" \
         "$SCRIPT_ROOT/sidecar-doctor.sh" \
         "$SCRIPT_ROOT/install-sidecar-shortcuts.sh"; do
         [ -r "$source" ] || fail "缺少安装源文件：$source"
@@ -267,6 +269,7 @@ build_outputs() {
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
         "$SCRIPT_ROOT/sidecar-login-ready.sh" \
+        "$SCRIPT_ROOT/sidecar-headless-display.sh" \
         "$SCRIPT_ROOT/sidecar-doctor.sh" \
         "$SCRIPT_ROOT/install-sidecar-shortcuts.sh"; do
         bash -n "$script" || fail "Shell 语法检查失败：$script"
@@ -346,6 +349,7 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
         if [ -f "$STAGE/$name" ]; then
@@ -372,6 +376,7 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
         if [ -e "$BIN_DIR/$name" ] || [ -L "$BIN_DIR/$name" ]; then
@@ -392,6 +397,7 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
         mv -f "$INSTALL_STAGE/$name" "$BIN_DIR/$name"
@@ -438,6 +444,7 @@ printf '  %s\n' \
     "$BIN_DIR/sidecar-disconnect-once.sh" \
     "$BIN_DIR/sidecar-ipad-usb-detect.sh" \
     "$BIN_DIR/sidecar-login-ready.sh" \
+    "$BIN_DIR/sidecar-headless-display.sh" \
     "$BIN_DIR/sidecar-doctor.sh" \
     "$BIN_DIR/install-sidecar-shortcuts.sh"
 if [ -f "$CONFIG_FILE" ]; then
