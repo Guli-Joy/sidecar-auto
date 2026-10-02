@@ -9,18 +9,16 @@
 
 Sidecar Auto 面向需要把 iPad 当作 Mac 显示器的人，尤其适合没有常驻显示器的 Mac mini。它只在用户主动触发时运行：先确认设备和显示状态，再选择有线或无线路径，最后验证 Sidecar 会话和画面是否真的上线。
 
-## 适合什么场景
+## 核心能力
 
-| 场景 | 行为 |
+| 需求 | 使用体验 |
 | --- | --- |
-| 插着数据线 | 检测唯一的 iPad USB 数据设备，优先使用 `ForceUSB`。 |
-| 没有数据线 | 准备 Wi‑Fi、蓝牙和接力，使用 `ForceAWDL`。 |
-| 没有实体显示器 | 启用项目内置的固定虚拟屏；也可以选择 BetterDisplay。 |
-| 重复按连接 | 检查现有会话，避免重复连接或抢占另一台 iPad。 |
+| 插着数据线 | 自动优先使用有线连接，减少无线准备步骤。 |
+| 没有数据线 | 按需准备 Wi‑Fi、蓝牙和接力，再尝试无线连接。 |
+| 没有实体显示器 | 使用项目内置虚拟屏，也可以选择 BetterDisplay。 |
+| 临时使用或重复触发 | 只在你主动点击或运行快捷指令时操作，不会后台无限重试。 |
 
-连接过程支持提示音、中文语音和通知；失败、取消和超时都会在有限时间内结束，不会后台无限重试。
-
-> Sidecar Auto 使用 Apple 未公开的 `SidecarCore` API。macOS 更新可能影响连接能力；请先阅读[限制与隐私](#限制与隐私)。
+连接过程支持提示音、中文语音和通知；失败、取消和超时都会在有限时间内结束。
 
 ## 下载
 
@@ -107,17 +105,23 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 
 日志保存在 `~/Library/Logs/sidecar-auto.log`，会自动轮转。多台 iPad 时，请同时配置准确的 `IPAD_NAME` 和 `IPAD_USB_SERIAL_NUMBER`。
 
-## 文档地图
+## 使用文档
 
 - [普通用户 App 指南](docs/APP_GUIDE.md)：下载、安装、首次授权和日常使用。
 - [排障手册](docs/TROUBLESHOOTING.md)：USB、无线、虚拟屏和权限问题。
+- [安全与隐私](docs/SECURITY_MODEL.md)：本地数据、配置边界和 macOS 权限。
+- [English overview](docs/README.en.md)：英文项目简介。
+
+<details>
+<summary>开发者与项目资料</summary>
+
 - [架构说明](docs/ARCHITECTURE.md)：脚本、Swift helper、安装器和显示后端。
-- [安全与权限模型](docs/SECURITY_MODEL.md)：本地数据、配置边界和 macOS 权限。
 - [测试与发布边界](docs/TESTING.md)：自动化测试和真实设备验证范围。
 - [发布说明](docs/RELEASE.md)：构建 DMG、上传资产和校验和。
 - [变更记录](docs/CHANGELOG.md)：版本变更。
-- [English overview](docs/README.en.md)：英文项目简介。
 - [第三方声明](docs/NOTICE.md)：上游 `sidecarctl` 许可和归属。
+
+</details>
 
 ## 开发和验证
 

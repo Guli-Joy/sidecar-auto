@@ -1,6 +1,6 @@
 # Sidecar Auto
 
-> One-shot Sidecar connections between a Mac and an iPad, triggered from a macOS Shortcut.
+> Connect an iPad as a Mac display with one macOS Shortcut.
 
 [![CI](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml/badge.svg)](https://github.com/Guli-Joy/sidecar-auto/actions/workflows/ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Guli-Joy/sidecar-auto?display_name=tag)](https://github.com/Guli-Joy/sidecar-auto/releases)
@@ -9,14 +9,14 @@
 
 Sidecar Auto is built for people who use an iPad as a Mac display, especially Mac mini setups without a permanent monitor. It checks the current state, chooses USB or direct wireless transport, prepares a headless display when needed, and verifies that the Sidecar picture is actually online.
 
-## What it does
+## Core capabilities
 
-| Situation | Behavior |
+| Need | Experience |
 | --- | --- |
-| iPad data cable connected | Detects the unique USB iPad and requests `ForceUSB`. |
-| No cable connected | Prepares Wi‑Fi, Bluetooth, and Handoff, then requests `ForceAWDL`. |
-| No physical monitor | Starts the built-in fixed virtual screen or an optional BetterDisplay backend. |
-| Repeated connection request | Verifies the existing session instead of taking over another iPad. |
+| iPad data cable connected | Prefers a wired connection and skips unnecessary wireless setup. |
+| No cable connected | Prepares Wi‑Fi, Bluetooth, and Handoff before trying wireless mode. |
+| No physical monitor | Starts the built-in virtual screen or an optional BetterDisplay backend. |
+| Temporary or repeated use | Runs only after an explicit click or Shortcut action; it never retries forever in the background. |
 
 Every action is explicit, bounded, and single-shot. The controller does not retry forever or connect in the background.
 
@@ -97,15 +97,21 @@ These commands are read-only:
 
 Logs stay in `~/Library/Logs/sidecar-auto.log` and rotate automatically. When multiple iPads are connected, set both the exact `IPAD_NAME` and the target `IPAD_USB_SERIAL_NUMBER`.
 
-## Documentation
+## User documentation
 
 - [App guide](APP_GUIDE.md): download, setup, permissions, and daily use.
 - [Troubleshooting](TROUBLESHOOTING.md): USB, wireless, display, and permission issues.
-- [Architecture](ARCHITECTURE.md): controllers, helpers, installer, and display providers.
 - [Security model](SECURITY_MODEL.md): local data, configuration boundaries, and macOS permissions.
+
+<details>
+<summary>Developer and project references</summary>
+
+- [Architecture](ARCHITECTURE.md): controllers, helpers, installer, and display providers.
 - [Testing](TESTING.md): automated checks and real-device validation boundaries.
 - [Release guide](RELEASE.md): free DMG builds, upload assets, and checksums.
 - [Changelog](CHANGELOG.md): version history.
+
+</details>
 
 ## Limitations and privacy
 
