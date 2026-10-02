@@ -330,6 +330,9 @@ IPAD_NAME="iPad"
 # Attempt to enable the Mac-side Handoff preferences before wireless Sidecar.
 # The iPad's Handoff switch still must be enabled on the iPad.
 AUTO_ENABLE_HANDOFF=1
+# Required for headless mode: start Sidecar Auto after login so it can create
+# the virtual display before the iPad is used as the main screen.
+AUTO_START_HEADLESS_DISPLAY=1
 VIRTUAL_DISPLAY_BACKEND="auto"
 VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 EOF

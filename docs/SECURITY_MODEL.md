@@ -11,6 +11,7 @@
 - 不保存 Apple Account、密码、FileVault 密码、配对令牌或 iPad 的内容。
 - TCC、FileVault、iPad 信任和第三方许可证由系统或用户决定，项目不绕过这些边界。
 - 日志和配置只保留在本机。诊断报告必须在导出前脱敏。
+更新检查只在用户点击“检查更新”时访问 GitHub Releases；不会后台轮询、静默替换应用或上传本机配置。下载完成后仍由用户打开 DMG 并确认替换应用。
 
 Sidecar 使用 Apple 未公开的 `SidecarCore` 接口。Sidecar Auto 与 Apple、
 BetterDisplay 没有隶属关系，也不能承诺每个 macOS 版本都保留相同的私有接口。
@@ -70,7 +71,7 @@ CoreBluetooth 的授权状态与“蓝牙无线电已开启”是两个状态，
 FileVault 的解密界面发生在用户桌面和普通 App 之前。设置助手、LaunchAgent、
 快捷指令和 Sidecar 都不能在这个界面运行，也不能输入或保存密码。FileVault
 开启时，冷启动无显示器仍需要用户通过键盘、远程管理或其他已配置的方式先解锁；
-项目只在用户登录后的桌面会话运行；开启“登录后静默启动”时，LaunchAgent 只启动
+项目只在用户登录后的桌面会话运行；无显示器模式必须开启“登录后静默启动”，此时 LaunchAgent 只启动
 设置助手，App 仍会遵守当前虚拟屏配置，不会自动连接 iPad。
 
 关闭 FileVault 才可能让 macOS 使用普通自动登录，但这会降低启动前保护，并且

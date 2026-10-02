@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.1 - 2026-10-02
+## 1.0.0 - 2026-10-02
 
 - Simplified headless startup to one per-user login item that silently starts
   `Sidecar Auto Setup.app`; the app then prepares the built-in virtual display
@@ -10,10 +10,12 @@
   `/Applications` before enabling launch-on-login.
 - Added regression coverage for headless preparation with a physical display,
   an already-online helper, and the disabled configuration path.
+- Added an in-app GitHub Releases update checker and arm64 DMG downloader.
+- Made login-after-start explicit and required for no-monitor mode; the
+  environment check now treats it as a required prerequisite when the built-in
+  virtual display is selected.
 - Updated the user guide, English overview, configuration examples, and
   troubleshooting steps to describe the single-app startup flow.
-
-## 1.0.0 - 2026-10-02
 
 - Consolidated shared runtime helpers for connection, disconnection and the
   post-login announcement. Logs now rotate at about 1 MiB, and the bundled

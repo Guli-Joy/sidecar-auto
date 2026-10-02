@@ -47,7 +47,8 @@ printf '%s\n' 'IPAD_USB_SERIAL_NUMBER="在此填写序列号"' >> "$HOME/.config
 ### 登录后没有自动准备虚拟屏
 
 打开 Sidecar Auto 的“连接设置 → 无显示器虚拟屏”，确认“登录后静默启动 Sidecar Auto”
-已开启并点击“保存设置”。然后检查运行时是否完整安装；也可以在终端确认登录项和日志：
+已开启并点击“保存设置”。没有实体显示器时，这一项是必需的；关闭它，登录后不会有
+可用主屏，iPad 也无法作为主屏使用。然后检查运行时是否完整安装；也可以在终端确认登录项和日志：
 
 ```sh
 launchctl print "gui/$(id -u)/com.sidecarauto.setup"

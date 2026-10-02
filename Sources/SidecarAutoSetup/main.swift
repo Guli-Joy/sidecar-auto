@@ -2,6 +2,7 @@ import AppKit
 @preconcurrency import CoreBluetooth
 import SwiftUI
 import Darwin
+import Foundation
 
 @MainActor
 final class SidecarAutoAppDelegate: NSObject, NSApplicationDelegate {
@@ -309,6 +310,35 @@ struct SetupConfig: Sendable {
     var virtualDisplayBackend: VirtualDisplayBackend = .auto
 }
 
+struct AppUpdateRelease: Sendable, Equatable {
+    let version: String
+    let releaseURL: String
+    let dmgURL: String
+    let assetName: String
+}
+
+private struct GitHubReleasePayload: Decodable, Sendable {
+    let tagName: String
+    let htmlURL: String
+    let assets: [GitHubAssetPayload]
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case assets
+    }
+}
+
+private struct GitHubAssetPayload: Decodable, Sendable {
+    let name: String
+    let browserDownloadURL: String
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case browserDownloadURL = "browser_download_url"
+    }
+}
+
 struct USBIPadCandidate: Identifiable, Hashable, Sendable {
     let name: String
     let serial: String
@@ -335,6 +365,10 @@ final class SetupModel: ObservableObject {
     @Published var usbCandidates: [USBIPadCandidate] = []
     @Published var betterDisplayReport = "尚未执行 BetterDisplay 只读检查。"
     @Published var isInspectingBetterDisplay = false
+    @Published var isCheckingForUpdates = false
+    @Published var isDownloadingUpdate = false
+    @Published var updateMessage = "尚未检查更新。"
+    @Published var availableUpdate: AppUpdateRelease?
 
     private let fileManager = FileManager.default
     private var bluetoothPermissionRequester: BluetoothPermissionRequester?
@@ -389,6 +423,144 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    private nonisolated static let latestReleaseEndpoint =
+        "https://api.github.com/repos/Guli-Joy/sidecar-auto/releases/latest"
+
+    private nonisolated static var currentAppVersionValue: String {
+        (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0.0.0"
+    }
+
+    func checkForUpdates() {
+        guard !isCheckingForUpdates, !isDownloadingUpdate else { return }
+        isCheckingForUpdates = true
+        updateMessage = "正在检查 GitHub Releases……"
+        availableUpdate = nil
+        let currentVersion = Self.currentAppVersionValue
+        Task { @MainActor [weak self] in
+            defer { self?.isCheckingForUpdates = false }
+            do {
+                guard let endpoint = URL(string: Self.latestReleaseEndpoint) else {
+                    throw UpdateError.invalidEndpoint
+                }
+                var request = URLRequest(url: endpoint)
+                request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+                request.setValue("Sidecar-Auto/\(currentVersion)", forHTTPHeaderField: "User-Agent")
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw UpdateError.server((response as? HTTPURLResponse)?.statusCode ?? 0)
+                }
+                let payload = try JSONDecoder().decode(GitHubReleasePayload.self, from: data)
+                let version = Self.normalizedVersion(payload.tagName)
+                guard !version.isEmpty else { throw UpdateError.invalidRelease }
+                guard let asset = payload.assets.first(where: {
+                    let name = $0.name.lowercased()
+                    return name.hasSuffix(".dmg") && name.contains("arm64")
+                }) else {
+                    throw UpdateError.missingArm64Asset
+                }
+                let release = AppUpdateRelease(
+                    version: version,
+                    releaseURL: payload.htmlURL,
+                    dmgURL: asset.browserDownloadURL,
+                    assetName: asset.name
+                )
+                guard let self else { return }
+                if Self.isVersion(version, newerThan: currentVersion) {
+                    self.availableUpdate = release
+                    self.updateMessage = "发现新版本 v\(version)，可下载 arm64 DMG。"
+                } else {
+                    self.updateMessage = "当前已经是最新版本 v\(currentVersion)。"
+                }
+            } catch is CancellationError {
+                self?.updateMessage = "更新检查已取消。"
+            } catch {
+                self?.updateMessage = "检查更新失败：\(Self.updateErrorMessage(error))"
+            }
+        }
+    }
+
+    func downloadLatestUpdate() {
+        guard !isDownloadingUpdate, let update = availableUpdate,
+              let url = URL(string: update.dmgURL) else { return }
+        isDownloadingUpdate = true
+        updateMessage = "正在下载 v\(update.version) DMG……"
+        Task { @MainActor [weak self] in
+            defer { self?.isDownloadingUpdate = false }
+            do {
+                var request = URLRequest(url: url)
+                request.setValue("Sidecar-Auto/\(Self.currentAppVersionValue)", forHTTPHeaderField: "User-Agent")
+                let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    throw UpdateError.server((response as? HTTPURLResponse)?.statusCode ?? 0)
+                }
+                let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                    ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Downloads", isDirectory: true)
+                try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+                let destination = downloads.appendingPathComponent(update.assetName)
+                if FileManager.default.fileExists(atPath: destination.path) {
+                    try FileManager.default.removeItem(at: destination)
+                }
+                try FileManager.default.moveItem(at: temporaryURL, to: destination)
+                self?.updateMessage = "已下载到“下载”文件夹。请打开 DMG，把新 App 拖到“应用程序”后重新打开。"
+                NSWorkspace.shared.activateFileViewerSelecting([destination])
+            } catch is CancellationError {
+                self?.updateMessage = "更新下载已取消。"
+            } catch {
+                self?.updateMessage = "下载更新失败：\(Self.updateErrorMessage(error))"
+            }
+        }
+    }
+
+    func openLatestReleasePage() {
+        guard let update = availableUpdate, let url = URL(string: update.releaseURL) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private enum UpdateError: LocalizedError {
+        case invalidEndpoint
+        case invalidRelease
+        case missingArm64Asset
+        case server(Int)
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidEndpoint: return "更新地址无效"
+            case .invalidRelease: return "Release 版本号无效"
+            case .missingArm64Asset: return "Release 没有 Apple Silicon DMG"
+            case let .server(status): return status > 0 ? "GitHub 返回 HTTP \(status)" : "无法连接 GitHub"
+            }
+        }
+    }
+
+    private nonisolated static func normalizedVersion(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "^v", with: "", options: .regularExpression)
+    }
+
+    private nonisolated static func versionParts(_ raw: String) -> [Int] {
+        normalizedVersion(raw).split(separator: ".", omittingEmptySubsequences: false).map { component in
+            Int(component.prefix { $0.isNumber }) ?? 0
+        }
+    }
+
+    private nonisolated static func isVersion(_ candidate: String, newerThan current: String) -> Bool {
+        let left = versionParts(candidate)
+        let right = versionParts(current)
+        for index in 0..<max(left.count, right.count) {
+            let lhs = index < left.count ? left[index] : 0
+            let rhs = index < right.count ? right[index] : 0
+            if lhs != rhs { return lhs > rhs }
+        }
+        return false
+    }
+
+    private nonisolated static func updateErrorMessage(_ error: Error) -> String {
+        if let localized = (error as? LocalizedError)?.errorDescription, !localized.isEmpty {
+            return localized
+        }
+        return error.localizedDescription
+    }
+
     var requiredCount: Int { checks.filter(\.required).count }
     /// Count local prerequisites and locally-ready partial checks as passed.
     /// For example, macOS exposes its Handoff preference but does not expose
@@ -420,6 +592,8 @@ final class SetupModel: ObservableObject {
     var bluetoothReady: Bool {
         checks.first(where: { $0.id == "bluetooth" })?.state == .good
     }
+
+    var currentAppVersion: String { Self.currentAppVersionValue }
 
     func refresh() {
         guard !isRefreshing else { return }
@@ -1385,6 +1559,7 @@ final class SetupModel: ObservableObject {
         let fileVault = fileVaultStatus()
         let autoLogin = autoLoginStatus(fileVaultEnabled: fileVault.enabled)
         let headlessAgent = headlessAgentStatus(config: config)
+        let headlessRequired = !physicalDisplay && config.virtualDisplayBackend != .betterdisplay
         let headlessAction: CheckAction? = !Bundle.main.bundlePath.hasPrefix("/Applications/")
             ? .openApplicationsFolder
             : config.virtualDisplayBackend == .betterdisplay ? .betterDisplay : .headlessAgent
@@ -1453,9 +1628,12 @@ final class SetupModel: ObservableObject {
             CheckItem(id: "autologin", title: "macOS 自动登录", detail: autoLogin.detail,
                       state: autoLogin.state, action: .loginOptions, actionTitle: "查看自动登录选项",
                       required: false),
-            CheckItem(id: "headless-agent", title: "登录后静默启动 App", detail: headlessAgent.detail,
-                      state: headlessAgent.ok ? .good : .optional, action: headlessAction,
-                      actionTitle: headlessAgent.actionTitle, required: false)
+            CheckItem(id: "headless-agent", title: "登录后静默启动 App", detail: headlessRequired
+                        ? (headlessAgent.ok ? headlessAgent.detail : "无显示器模式必须开启此项：登录后先静默启动 App，App 才能创建虚拟屏并让 iPad 作为主屏使用。\n\(headlessAgent.detail)")
+                        : headlessAgent.detail,
+                      state: headlessAgent.ok ? .good : (headlessRequired ? .action : .optional), action: headlessAction,
+                      actionTitle: headlessRequired ? (headlessAgent.actionTitle == "开启静默启动" ? "立即开启" : headlessAgent.actionTitle) : headlessAgent.actionTitle,
+                      required: headlessRequired)
         ]
     }
 
@@ -1905,7 +2083,7 @@ final class SetupModel: ObservableObject {
         if FileManager.default.fileExists(atPath: headlessAgentURL().path) {
             return (false, "已创建 Sidecar Auto 登录项但当前未加载；点击按钮可重新加载。", "重新加载")
         }
-        return (false, "已开启配置但 Sidecar Auto 登录项尚未加载；点击按钮启用静默启动。", "开启静默启动")
+        return (false, "已开启配置但 Sidecar Auto 登录项尚未加载；无显示器模式必须点击此处启用静默启动。", "开启静默启动")
     }
 
     private nonisolated static func headlessAgentPlist() -> Data? {
@@ -2399,6 +2577,42 @@ private struct SetupView: View {
             heroCard
             HStack(alignment: .top, spacing: 16) { overviewStatusCard; nextStepCard }
             quickActions
+            updatePanel
+        }
+    }
+
+    private var updatePanel: some View {
+        Panel {
+            PanelTitle(title: "应用更新", subtitle: "当前版本 v\(model.currentAppVersion)；检查后可下载最新 arm64 DMG。", symbol: "arrow.down.circle")
+            HStack(alignment: .top, spacing: 12) {
+                Text(model.updateMessage)
+                    .font(.callout).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button(model.isCheckingForUpdates ? "检查中…" : "检查更新") {
+                    model.checkForUpdates()
+                }
+                .buttonStyle(.bordered)
+                .disabled(model.isCheckingForUpdates || model.isDownloadingUpdate)
+            }
+            if let update = model.availableUpdate {
+                HStack(spacing: 10) {
+                    Label("发现 v\(update.version)", systemImage: "checkmark.seal.fill")
+                        .foregroundStyle(.green)
+                    Spacer()
+                    Button(model.isDownloadingUpdate ? "下载中…" : "下载 DMG") {
+                        model.downloadLatestUpdate()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(model.isDownloadingUpdate)
+                    Button("打开 Release") { model.openLatestReleasePage() }
+                        .buttonStyle(.bordered)
+                        .disabled(model.isDownloadingUpdate)
+                }
+                Text("下载完成后退出当前 App，把新版本拖到“应用程序”并重新打开。无显示器模式请确认新版本中的“登录后静默启动”仍已开启。")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
@@ -2557,8 +2771,8 @@ private struct SetupView: View {
                     }
                     Text("项目内置方案固定为 1920×1080、60Hz；BetterDisplay 支持更多分辨率和布局参数。内置方案依赖 macOS 的系统接口，系统升级后如遇兼容问题可切换方案。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Toggle("登录后静默启动 Sidecar Auto（推荐）", isOn: $model.config.autoStartHeadlessDisplay)
-                    Text("开启后，进入 macOS 桌面时会静默启动本 App；没有实体显示器时，App 会先创建项目内置虚拟屏，让 iPad 能作为主屏使用。它不会自动连接或断开 iPad，也不需要辅助功能或屏幕录制权限。")
+                    Toggle("登录后静默启动 Sidecar Auto（无显示器必需）", isOn: $model.config.autoStartHeadlessDisplay)
+                    Text("如果 Mac 没有实体显示器，必须开启此项并保存：登录进入 macOS 桌面后会静默启动本 App，由 App 创建虚拟屏，让 iPad 能作为主屏使用。它不会自动连接或断开 iPad，也不需要辅助功能或屏幕录制权限。")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -2627,7 +2841,7 @@ private struct SetupView: View {
     private var requiredCheckIDs: [String] {
         let required = Set(model.checks.filter(\.required).map(\.id))
         let preferred = ["mac", "runtime", "config", "transport", "wifi", "bluetooth", "handoff",
-                         "builtin-virtual", "betterdisplay"]
+                         "builtin-virtual", "betterdisplay", "headless-agent"]
         return preferred.filter { required.contains($0) }
     }
 
@@ -2735,7 +2949,7 @@ private struct SetupView: View {
 
     private var headlessAgentPanel: some View {
         Panel {
-            PanelTitle(title: "登录后静默启动", subtitle: "登录时启动 App，由 App 准备虚拟屏，不会自动连接 iPad。", symbol: "display.2")
+            PanelTitle(title: "登录后静默启动（无显示器必需）", subtitle: "没有实体显示器时必须开启；登录时启动 App，由 App 准备虚拟屏。", symbol: "display.2")
             let headlessAgent = model.checks.first(where: { $0.id == "headless-agent" })
             HStack(alignment: .top, spacing: 12) {
                 Text(headlessAgent?.detail ?? "正在读取登录项状态……")

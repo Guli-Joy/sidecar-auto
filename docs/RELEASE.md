@@ -10,12 +10,12 @@
 已安装 Xcode Command Line Tools）：
 
 ```sh
-./packaging/build-sidecar-auto-app.sh --host-only --version 1.0.1 \
+./packaging/build-sidecar-auto-app.sh --host-only --version 1.0.0 \
   --output ./dist
 ./packaging/make-dmg.sh --app "./dist/Sidecar Auto Setup.app" --output ./dist \
-  --version 1.0.1
-mv ./dist/Sidecar-Auto-Setup.dmg ./dist/Sidecar-Auto-Setup-1.0.1-arm64.dmg
-shasum -a 256 ./dist/Sidecar-Auto-Setup-1.0.1-arm64.dmg > ./dist/SHA256SUMS
+  --version 1.0.0
+mv ./dist/Sidecar-Auto-Setup.dmg ./dist/Sidecar-Auto-Setup-1.0.0-arm64.dmg
+shasum -a 256 ./dist/Sidecar-Auto-Setup-1.0.0-arm64.dmg > ./dist/SHA256SUMS
 ```
 
 脚本会把 `sidecarctl`、显示探针、蓝牙 helper 和连接脚本放进 App Resources；
@@ -23,7 +23,7 @@ shasum -a 256 ./dist/Sidecar-Auto-Setup-1.0.1-arm64.dmg > ./dist/SHA256SUMS
 脚本默认使用本地 ad-hoc 封装签名，不需要证书；`--host-only` 可以在不需要交叉编译
 时只构建当前架构。
 
-生成 `dist/Sidecar-Auto-Setup-1.0.1-arm64.dmg` 和 `SHA256SUMS` 后，把它们上传到
+生成 `dist/Sidecar-Auto-Setup-1.0.0-arm64.dmg` 和 `SHA256SUMS` 后，把它们上传到
 GitHub Release。DMG 打开后会显示 App 和“应用程序”快捷方式，把 App 拖到“应用程序”
 即可安装。首次打开若被 macOS 拦截，到“系统设置 → 隐私与安全性”允许打开即可。
 
@@ -37,7 +37,7 @@ Apple 公证。免费 DMG 流程不需要证书、Apple Account 或公证凭据�
 
 ```sh
 ./packaging/release-sidecar-auto.sh \
-  --version 1.0.1 \
+  --version 1.0.0 \
   --identity "Developer ID Application: Example Company (TEAMID)" \
   --keychain-profile "sidecar-auto-notary"
 ```

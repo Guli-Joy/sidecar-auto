@@ -19,7 +19,7 @@ trap cleanup EXIT
     exit 1
 }
 
-"$ROOT/packaging/make-dmg.sh" --app "$APP_PATH" --output "$OUT" --version 1.0.1
+"$ROOT/packaging/make-dmg.sh" --app "$APP_PATH" --output "$OUT" --version 1.0.0
 hdiutil verify "$OUT/Sidecar-Auto-Setup.dmg" >/dev/null
 hdiutil attach -readonly -nobrowse -plist "$OUT/Sidecar-Auto-Setup.dmg" > "$OUT/attach.plist"
 MOUNTPOINT="$(python3 - "$OUT/attach.plist" <<'PY'

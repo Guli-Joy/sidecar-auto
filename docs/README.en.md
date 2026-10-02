@@ -22,7 +22,9 @@ Every action is explicit, bounded, and single-shot. The controller does not retr
 
 ## Download
 
-Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The current stable fix release is [v1.0.1](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.1); v1.0.0 was the first stable release, with an Apple Silicon (arm64) installer.
+Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The first stable release is [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0), with an Apple Silicon (arm64) installer.
+
+The app's Overview page includes **Check for Updates**. It reads GitHub Releases and, when a newer arm64 build is available, downloads the DMG to your Downloads folder. Open the DMG, drag the new app to Applications, and relaunch it.
 
 If macOS blocks the first launch, open **System Settings → Privacy & Security** and allow the app to open. Depending on the macOS version, the control may be shown as **Allow applications from anywhere** or **Open Anyway**.
 
@@ -62,6 +64,8 @@ Use `wired` or `wireless` instead of `auto` when troubleshooting a specific tran
 ## Headless mode
 
 The default `auto` provider prefers the built-in 1920×1080, 60 Hz virtual screen. It does not require BetterDisplay, but it relies on undocumented macOS virtual-display APIs.
+
+On a Mac without a physical monitor, **Start Sidecar Auto quietly after login** is required. The app must start in the logged-in desktop session before it can create the virtual screen that lets the iPad become the main display. Enable it in Connection Settings and save the configuration; it never connects or disconnects Sidecar by itself.
 
 Choose BetterDisplay when you need HiDPI, additional resolutions, or advanced layouts:
 
@@ -104,16 +108,6 @@ Logs stay in `~/Library/Logs/sidecar-auto.log` and rotate automatically. When mu
 - [App guide](APP_GUIDE.md): download, setup, permissions, and daily use.
 - [Troubleshooting](TROUBLESHOOTING.md): USB, wireless, display, and permission issues.
 - [Security model](SECURITY_MODEL.md): local data, configuration boundaries, and macOS permissions.
-
-<details>
-<summary>Developer and project references</summary>
-
-- [Architecture](ARCHITECTURE.md): controllers, helpers, installer, and display providers.
-- [Testing](TESTING.md): automated checks and real-device validation boundaries.
-- [Release guide](RELEASE.md): free DMG builds, upload assets, and checksums.
-- [Changelog](CHANGELOG.md): version history.
-
-</details>
 
 ## Limitations and privacy
 

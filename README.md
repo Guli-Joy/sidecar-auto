@@ -22,7 +22,9 @@ Sidecar Auto 面向需要把 iPad 当作 Mac 显示器的人，尤其适合没�
 
 ## 下载
 
-普通用户直接前往 [Releases](https://github.com/Guli-Joy/sidecar-auto/releases) 下载最新 DMG。当前稳定修复版是 [v1.0.1](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.1)；首个正式版本为 v1.0.0，提供 Apple Silicon（arm64）安装包。
+普通用户直接前往 [Releases](https://github.com/Guli-Joy/sidecar-auto/releases) 下载最新 DMG。当前首个正式版本是 [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0)，提供 Apple Silicon（arm64）安装包。
+
+App 的“概览”页提供“检查更新”。它会读取 GitHub Releases，发现新版本后把 arm64 DMG 下载到“下载”文件夹；打开 DMG 后把新 App 拖到“应用程序”并重新打开即可完成更新。
 
 首次打开时如果 macOS 拦截应用，请到“系统设置 → 隐私与安全性”允许打开；部分系统会显示“允许来自任何来源”或“仍要打开”。
 
@@ -113,45 +115,6 @@ VIRTUAL_DISPLAY_NAME="SidecarHeadlessFallback"
 - [排障手册](docs/TROUBLESHOOTING.md)：USB、无线、虚拟屏和权限问题。
 - [安全与隐私](docs/SECURITY_MODEL.md)：本地数据、配置边界和 macOS 权限。
 - [English overview](docs/README.en.md)：英文项目简介。
-
-<details>
-<summary>开发者与项目资料</summary>
-
-- [架构说明](docs/ARCHITECTURE.md)：脚本、Swift helper、安装器和显示后端。
-- [测试与发布边界](docs/TESTING.md)：自动化测试和真实设备验证范围。
-- [发布说明](docs/RELEASE.md)：构建 DMG、上传资产和校验和。
-- [变更记录](docs/CHANGELOG.md)：版本变更。
-- [第三方声明](docs/NOTICE.md)：上游 `sidecarctl` 许可和归属。
-
-</details>
-
-## 开发和验证
-
-项目按用途组织：
-
-```text
-scripts/       连接、断开、诊断和快捷键脚本
-Sources/       显示探针、蓝牙和虚拟屏 helper
-vendor/        上游 sidecarctl 源码
-installer/     源码安装器
-packaging/     App、DMG 和发布脚本
-tests/         不连接真实设备的回归测试
-docs/          用户、架构、安全和发布文档
-```
-
-提交前运行：
-
-```sh
-bash -n ./installer/install-sidecar-auto.sh ./scripts/*.sh ./packaging/*.sh ./tests/*.sh
-bash tests/test_usb_detector.sh
-bash tests/test_connect_controller.sh
-bash tests/test_connect_config_validation.sh
-bash tests/test_recovery_timeout.sh
-bash tests/test_headless_display.sh
-./installer/install-sidecar-auto.sh --build-only
-```
-
-测试不会连接真实 iPad；真实设备验证应记录 macOS 版本、Mac 架构、连接方式、显示器状态和 iPad 解锁状态。
 
 ## 限制与隐私
 
