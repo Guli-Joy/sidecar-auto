@@ -197,9 +197,11 @@ BetterDisplay。
 
 ### App 意外退出或连接时提示“找不到 sidecarctl”
 
-请使用最新 Release 中的 App，并确认它位于“应用程序”文件夹。先点击“安装 / 修复”，
-再点击“重新检查”。安装器会把 `sidecarctl`、显示检测程序和连接脚本复制到
-`~/.local/bin/`。当前版本也兼容旧配置中写成 `$HOME/.local/bin/sidecarctl` 的字面路径。
+请使用最新 Release 中的 App，并确认它位于“应用程序”文件夹。当前版本会在连接或断开前
+自动检查运行时版本；发现旧工具时会先执行一次“安装 / 修复”，完成后再继续操作。你也可以
+先手动点击“安装 / 修复”，再点击“重新检查”。安装器会把 `sidecarctl`、显示检测程序和
+连接脚本复制到 `~/.local/bin/`。当前版本也兼容旧配置中写成 `$HOME/.local/bin/sidecarctl`
+的字面路径。
 如果仍然退出，请把 `~/Library/Logs/DiagnosticReports/SidecarAutoSetup-*.ips` 和
 `~/.local/bin/sidecar-doctor.sh` 的只读输出提供给维护者。
 

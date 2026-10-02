@@ -358,6 +358,12 @@ final class SetupModel: ObservableObject {
     private var operationTask: Task<ProcessResult, Never>?
     private var headlessStartTask: Task<Void, Never>?
     private var activeOperationExecutable = ""
+    private var pendingRuntimeOperation: PendingRuntimeOperation?
+
+    private enum PendingRuntimeOperation {
+        case connect
+        case disconnect
+    }
 
     init() {
         config = readConfig()
@@ -1001,6 +1007,13 @@ final class SetupModel: ObservableObject {
     /// Connects once through the existing serialized controller. This action
     /// is never started by a status refresh or at application launch.
     func connect() {
+        if !Self.installedRuntimeIsCurrent() {
+            guard !isInstalling else { return }
+            pendingRuntimeOperation = .connect
+            message = "连接前正在自动修复运行时工具……"
+            installRuntime()
+            return
+        }
         runOperation(
             executable: "\(NSHomeDirectory())/.local/bin/sidecar-connect-once.sh",
             arguments: ["auto"],
@@ -1013,6 +1026,13 @@ final class SetupModel: ObservableObject {
     /// this button; the setup app never disconnects an existing session while
     /// checking status.
     func disconnect() {
+        if !Self.installedRuntimeIsCurrent() {
+            guard !isInstalling else { return }
+            pendingRuntimeOperation = .disconnect
+            message = "断开前正在自动修复运行时工具……"
+            installRuntime()
+            return
+        }
         runOperation(
             executable: "\(NSHomeDirectory())/.local/bin/sidecar-disconnect-once.sh",
             arguments: [],
@@ -1344,8 +1364,19 @@ final class SetupModel: ObservableObject {
             self?.appendInstallerLog(result.output)
             self?.isInstalling = false
             if result.status == 0 {
-            self?.syncHeadlessAgentAfterInstall()
+                self?.syncHeadlessAgentAfterInstall()
+                let pending = self?.pendingRuntimeOperation
+                self?.pendingRuntimeOperation = nil
+                switch pending {
+                case .connect:
+                    self?.connect()
+                case .disconnect:
+                    self?.disconnect()
+                case .none:
+                    break
+                }
             } else {
+                self?.pendingRuntimeOperation = nil
                 self?.message = "安装失败，请查看下方日志并按提示处理。"
             }
         }
@@ -1686,6 +1717,14 @@ final class SetupModel: ObservableObject {
         }
     }
 
+    private nonisolated static func installedRuntimeIsCurrent() -> Bool {
+        let markerPath = "\(NSHomeDirectory())/.local/bin/sidecar-runtime-common.sh"
+        guard let commonText = try? String(contentsOfFile: markerPath, encoding: .utf8) else {
+            return false
+        }
+        return commonText.contains("sidecar-auto-runtime-format: 2")
+    }
+
     private nonisolated static func runtimeStatus() -> (ok: Bool, detail: String) {
         let bin = "\(NSHomeDirectory())/.local/bin"
         let names = [
@@ -1705,8 +1744,13 @@ final class SetupModel: ObservableObject {
             "install-sidecar-shortcuts.sh"
         ]
         let missing = names.filter { !commandExists("\(bin)/\($0)") }
-        if missing.isEmpty { return (true, "核心工具已安装到 ~/.local/bin") }
-        return (false, "缺少：\(missing.joined(separator: "、"))")
+        if !missing.isEmpty {
+            return (false, "缺少：\(missing.joined(separator: "、"))")
+        }
+        guard installedRuntimeIsCurrent() else {
+            return (false, "运行时版本过旧，请点击“安装 / 修复”更新连接工具")
+        }
+        return (true, "核心工具已安装到 ~/.local/bin")
     }
 
     private nonisolated static func wifiStatus() -> (ok: Bool, detail: String) {

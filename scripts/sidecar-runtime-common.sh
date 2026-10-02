@@ -1,5 +1,6 @@
 #!/bin/bash
 # Shared functions for the standalone runtime entry points.
+# sidecar-auto-runtime-format: 2
 # This file is sourced from the same directory as the installed scripts.
 
 # Read configuration as data.  The config file is intentionally a small
@@ -33,6 +34,15 @@ config_file_is_safe() {
     return 0
 }
 
+expand_home_path() {
+    local value="${1:-}"
+    case "$value" in
+        '$HOME/'*) printf '%s/%s\n' "$HOME" "${value#'$HOME/'}" ;;
+        '~/'*) printf '%s/%s\n' "$HOME" "${value#'~/'}" ;;
+        *) printf '%s\n' "$value" ;;
+    esac
+}
+
 config_load() {
     local config="${1:-}" key value
     config_file_is_safe "$config" || return 0
@@ -54,10 +64,7 @@ config_load() {
                 # home-directory spelling for known path settings.
                 case "$key" in
                     IOREG_BIN|SIDECAR_BIN|SIDECAR_USB_DETECT_BIN|SIDECAR_BLUETOOTH_RADIO_BIN|BLUETOOTH_PROFILER_BIN|NETWORKSETUP_BIN|DEFAULTS_BIN|DISPLAY_STATE_BIN|BETTERDISPLAY_CLI|BETTERDISPLAY_APP|VIRTUAL_DISPLAY_HELPER|LOG_FILE|SOUND_START|SOUND_SUCCESS|SOUND_FAILURE)
-                        case "$value" in
-                            '$HOME/'*) value="$HOME/${value#'$HOME/'}" ;;
-                            '~/'*) value="$HOME/${value#'~/'}" ;;
-                        esac
+                        value="$(expand_home_path "$value")"
                         ;;
                 esac
                 printf -v "$key" '%s' "$value"
