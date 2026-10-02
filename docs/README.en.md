@@ -22,7 +22,7 @@ Every action is explicit, bounded, and single-shot. The controller does not retr
 
 ## Download
 
-Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The first stable release is [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0), with an Apple Silicon (arm64) installer.
+Download the latest DMG from [GitHub Releases](https://github.com/Guli-Joy/sidecar-auto/releases). The current stable fix release is [v1.0.1](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.1); v1.0.0 was the first stable release, with an Apple Silicon (arm64) installer.
 
 If macOS blocks the first launch, open **System Settings → Privacy & Security** and allow the app to open. Depending on the macOS version, the control may be shown as **Allow applications from anywhere** or **Open Anyway**.
 

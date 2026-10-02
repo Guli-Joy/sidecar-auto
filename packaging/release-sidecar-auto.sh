@@ -19,7 +19,7 @@ usage() {
 用法：release-sidecar-auto.sh --version VERSION --identity IDENTITY --keychain-profile PROFILE [选项]
 
 选项：
-  --version VERSION          发布版本，例如 1.0.0
+  --version VERSION          发布版本，例如 1.0.1
   --identity IDENTITY        Developer ID Application 签名身份
   --keychain-profile NAME    notarytool 已保存的钥匙串 profile
   --arch LIST                架构列表，默认 arm64,x86_64

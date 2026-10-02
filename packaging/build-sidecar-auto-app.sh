@@ -17,7 +17,7 @@ APP_NAME="Sidecar Auto Setup"
 OUT_DIR="${SIDECAR_AUTO_APP_OUT_DIR:-$ROOT/dist}"
 APP_DIR="$OUT_DIR/$APP_NAME.app"
 STAGE=""
-VERSION="${SIDECAR_AUTO_VERSION:-1.0.0}"
+VERSION="${SIDECAR_AUTO_VERSION:-1.0.1}"
 BUILD_VERSION="${SIDECAR_AUTO_BUILD_VERSION:-}"
 SIGNING_IDENTITY="${SIDECAR_AUTO_SIGNING_IDENTITY:-}"
 ADHOC_SIGNED=0
@@ -35,7 +35,7 @@ usage() {
   --host-only             只构建当前 Mac 架构
   --arch LIST             架构列表，例如 arm64,x86_64
   --output DIR            输出目录（默认：./dist）
-  --version VERSION       CFBundleShortVersionString（默认：1.0.0）
+  --version VERSION       CFBundleShortVersionString（默认：1.0.1）
   --sign IDENTITY         用 codesign 身份签名；不指定则使用本地 ad-hoc 封装签名
   -h, --help              显示帮助
 

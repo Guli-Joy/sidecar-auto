@@ -9,7 +9,7 @@ Tools，也不需要在终端输入命令。
 
 ## 下载与安装
 
-1. 在 GitHub 仓库的 **Releases** 下载最新的 `Sidecar-Auto-Setup-1.0.0-arm64.dmg`。
+1. 在 GitHub 仓库的 **Releases** 下载最新的 `Sidecar-Auto-Setup-1.0.1-arm64.dmg`。
 2. 打开 DMG，把 **Sidecar Auto Setup.app** 拖到“应用程序”。
 3. 从“应用程序”打开 App。如果 macOS 拦截首次启动，请到“系统设置 → 隐私与安全性”
    允许打开；部分系统会显示“允许来自任何来源”或“仍要打开”。

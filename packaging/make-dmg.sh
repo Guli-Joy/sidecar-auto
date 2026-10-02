@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_PATH="${SIDECAR_AUTO_APP_PATH:-$ROOT/dist/Sidecar Auto Setup.app}"
 OUTPUT_DIR="${SIDECAR_AUTO_APP_OUT_DIR:-$ROOT/dist}"
-VERSION="${SIDECAR_AUTO_VERSION:-1.0.0}"
+VERSION="${SIDECAR_AUTO_VERSION:-1.0.1}"
 
 usage() {
     cat <<USAGE

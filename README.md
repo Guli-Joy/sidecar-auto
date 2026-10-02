@@ -22,7 +22,7 @@ Sidecar Auto 面向需要把 iPad 当作 Mac 显示器的人，尤其适合没�
 
 ## 下载
 
-普通用户直接前往 [Releases](https://github.com/Guli-Joy/sidecar-auto/releases) 下载最新 DMG。当前首个正式版本是 [v1.0.0](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.0)，提供 Apple Silicon（arm64）安装包。
+普通用户直接前往 [Releases](https://github.com/Guli-Joy/sidecar-auto/releases) 下载最新 DMG。当前稳定修复版是 [v1.0.1](https://github.com/Guli-Joy/sidecar-auto/releases/tag/v1.0.1)；首个正式版本为 v1.0.0，提供 Apple Silicon（arm64）安装包。
 
 首次打开时如果 macOS 拦截应用，请到“系统设置 → 隐私与安全性”允许打开；部分系统会显示“允许来自任何来源”或“仍要打开”。
 
