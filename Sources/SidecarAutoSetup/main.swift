@@ -103,7 +103,7 @@ private struct MenuBarContent: View {
 }
 
 enum CheckState: Sendable, Equatable {
-    case good, partial, warning, action, unknown, optional
+    case good, partial, permission, warning, action, unknown, optional
 
     var color: Color {
         switch self {
@@ -112,6 +112,9 @@ enum CheckState: Sendable, Equatable {
         // remotely, so this is still labelled separately while using the
         // same green treatment as a ready local prerequisite.
         case .partial: return .green
+        // The radio can already be on while this app still needs its own
+        // Bluetooth privacy grant. Keep that distinct from "radio off".
+        case .permission: return .orange
         case .warning: return .orange
         case .action: return .blue
         case .unknown: return .secondary
@@ -123,6 +126,7 @@ enum CheckState: Sendable, Equatable {
         switch self {
         case .good: return "checkmark.circle.fill"
         case .partial: return "checkmark.circle.fill"
+        case .permission: return "lock.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .action: return "arrow.right.circle.fill"
         case .unknown: return "questionmark.circle"
@@ -134,6 +138,7 @@ enum CheckState: Sendable, Equatable {
 enum CheckAction: Sendable, Equatable {
     case install, refresh, bluetooth, handoff
     case betterDisplay, shortcuts, installShortcuts, fileVault, loginOptions, loginAgent
+    case restartApp, openApplicationsFolder
 }
 
 /// Keeps a CoreBluetooth manager alive long enough for macOS to show the
@@ -184,6 +189,65 @@ private final class BluetoothStatusProbe: NSObject, CBCentralManagerDelegate {
         let callback = onState
         DispatchQueue.main.async {
             callback(central.state)
+        }
+    }
+}
+
+private enum BluetoothAuthorizationStatus: Sendable {
+    case allowed
+    case notDetermined
+    case denied
+    case restricted
+    case unknown
+}
+
+private struct BluetoothStatus: Sendable {
+    let radioOn: Bool
+    let authorization: BluetoothAuthorizationStatus
+    let permissionWasRequested: Bool
+    let runningFromApplications: Bool
+    let detail: String
+
+    var ok: Bool {
+        radioOn && authorization == .allowed
+    }
+
+    /// The radio and the app privacy grant are independent prerequisites.
+    /// A powered-on radio with no app grant is not a radio failure, so expose
+    /// a dedicated state instead of making the row look like Bluetooth is off.
+    var checkState: CheckState {
+        if ok { return .good }
+        if radioOn && authorization != .allowed { return .permission }
+        return .warning
+    }
+
+    var actionTitle: String {
+        if ok { return "重新检查" }
+        if permissionWasRequested && !runningFromApplications {
+            return "打开应用程序文件夹"
+        }
+        switch authorization {
+        case .denied, .restricted:
+            return permissionWasRequested ? "重启 App" : "打开蓝牙设置"
+        case .notDetermined:
+            return permissionWasRequested ? "打开蓝牙设置" : "申请一次"
+        case .allowed:
+            return "开启蓝牙"
+        case .unknown:
+            return "检查蓝牙设置"
+        }
+    }
+
+    var action: CheckAction {
+        if ok { return .refresh }
+        if permissionWasRequested && !runningFromApplications {
+            return .openApplicationsFolder
+        }
+        switch authorization {
+        case .denied, .restricted:
+            return permissionWasRequested ? .restartApp : .bluetooth
+        case .notDetermined, .allowed, .unknown:
+            return .bluetooth
         }
     }
 }
@@ -265,6 +329,7 @@ final class SetupModel: ObservableObject {
     private var shouldProbeBluetoothAfterSettings = false
     private var activeObserver: NSObjectProtocol?
     private var operationLogStartOffset: UInt64 = 0
+    private var lastObservedLogSize: UInt64 = 0
 
     init() {
         config = readConfig()
@@ -280,6 +345,12 @@ final class SetupModel: ObservableObject {
             }
         }
         refresh()
+    }
+
+    deinit {
+        if let activeObserver {
+            NotificationCenter.default.removeObserver(activeObserver)
+        }
     }
 
     var requiredCount: Int { checks.filter(\.required).count }
@@ -357,12 +428,27 @@ final class SetupModel: ObservableObject {
             message = "蓝牙权限已同步，环境状态已更新。"
         case .unauthorized:
             bluetoothStatusProbe = nil
-            message = "系统设置仍未向当前 App 副本授予蓝牙权限；请确认开关对应的是正在运行的 Sidecar Auto Setup.app。"
+            checks[index] = CheckItem(
+                id: current.id, title: current.title,
+                detail: "Mac 蓝牙无线电状态已打开，但当前运行副本还没有拿到授权结果。若系统设置已开启，请先重启这个 App；如果仍未恢复，再确认开关对应当前运行的副本。",
+                state: .permission, action: .restartApp, actionTitle: "重启 App", required: current.required
+            )
+            message = "蓝牙授权已变更；正在运行的 App 需要重启后才能重新读取。"
         case .poweredOff:
             bluetoothStatusProbe = nil
+            checks[index] = CheckItem(
+                id: current.id, title: current.title,
+                detail: "App 的蓝牙隐私授权已允许，但 Mac 蓝牙无线电处于关闭状态。",
+                state: .warning, action: .bluetooth, actionTitle: "开启蓝牙", required: current.required
+            )
             message = "蓝牙权限已确认，但 Mac 蓝牙无线电仍处于关闭状态。"
         case .unsupported:
             bluetoothStatusProbe = nil
+            checks[index] = CheckItem(
+                id: current.id, title: current.title,
+                detail: "当前 Mac 不支持蓝牙无线连接。",
+                state: .warning, action: nil, actionTitle: nil, required: current.required
+            )
             message = "当前 Mac 不支持蓝牙无线连接。"
         default:
             break
@@ -469,10 +555,10 @@ final class SetupModel: ObservableObject {
         let pidURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Caches/sidecar-auto/active-operation.pid")
         guard let text = try? String(contentsOf: pidURL, encoding: .utf8),
               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
-            operationLog += "\n⚠️ 找不到当前操作进程；脚本会在当前阶段结束后停止。\n"
+            appendOperationLog("\n⚠️ 找不到当前操作进程；脚本会在当前阶段结束后停止。\n")
             return
         }
-        operationLog += "\n正在停止连接脚本和它启动的子进程…\n"
+        appendOperationLog("\n正在停止连接脚本和它启动的子进程…\n")
         Task.detached(priority: .userInitiated) {
             Self.terminateProcessTree(rootPID: pid)
         }
@@ -486,6 +572,11 @@ final class SetupModel: ObservableObject {
             refresh()
         case .bluetooth:
             requestBluetoothAccess()
+        case .restartApp:
+            restartApplication()
+        case .openApplicationsFolder:
+            NSWorkspace.shared.open(URL(fileURLWithPath: "/Applications", isDirectory: true))
+            message = "已打开“应用程序”文件夹。请从同一个 Sidecar Auto Setup.app 启动，然后重新检查；不要同时运行 dist 和应用程序中的副本。"
         case .handoff:
             openHandoffSettings()
         case .betterDisplay:
@@ -526,6 +617,18 @@ final class SetupModel: ObservableObject {
             message = "已打开“用户与群组”。请查看“自动登录为”；文件保险箱开启时 macOS 会禁用此选项。"
         case .loginAgent:
             toggleLoginAgent()
+        }
+    }
+
+    private func restartApplication() {
+        let appURL = Bundle.main.bundleURL
+        message = "正在重启 Sidecar Auto，以重新读取系统授权……"
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in
+            DispatchQueue.main.async {
+                NSApp.terminate(nil)
+            }
         }
     }
 
@@ -683,6 +786,7 @@ final class SetupModel: ObservableObject {
         isOperating = true
         isCancelRequested = false
         operationLogStartOffset = Self.sidecarLogFileSize()
+        lastObservedLogSize = operationLogStartOffset
         operationStage = startMessage
         operationLog = "\(startMessage)\n"
         message = startMessage
@@ -705,19 +809,19 @@ final class SetupModel: ObservableObject {
             // captured stdout/stderr when a helper did return it.
             let captured = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             if !captured.isEmpty {
-                self.operationLog += "\n\(captured)\n"
+                self.appendOperationLog("\n\(captured)\n")
             } else {
-                self.operationLog += "\n脚本未返回标准输出；详细诊断已写入 ~/Library/Logs/sidecar-auto.log。\n"
+                self.appendOperationLog("\n脚本未返回标准输出；详细诊断已写入 ~/Library/Logs/sidecar-auto.log。\n")
             }
             if let diagnosticTail = self.sidecarDiagnosticTail() {
-                self.operationLog += "\n最近的诊断日志：\n\(diagnosticTail)\n"
+                self.appendOperationLog("\n最近的诊断日志：\n\(diagnosticTail)\n")
             }
             if self.isCancelRequested {
-                self.operationLog += "\n⚠️ \(operationLabel)已取消（进程退出码 \(result.status)）\n"
+                self.appendOperationLog("\n⚠️ \(operationLabel)已取消（进程退出码 \(result.status)）\n")
             } else if result.status == 0 {
-                self.operationLog += "\n✅ \(operationLabel)成功（退出码 0）\n"
+                self.appendOperationLog("\n✅ \(operationLabel)成功（退出码 0）\n")
             } else {
-                self.operationLog += "\n❌ \(operationLabel)失败（退出码 \(result.status)）\n"
+                self.appendOperationLog("\n❌ \(operationLabel)失败（退出码 \(result.status)）\n")
             }
             self.isOperating = false
             self.operationStage = self.isCancelRequested ? "操作已取消" : (result.status == 0 ? "操作完成" : "操作失败")
@@ -732,11 +836,29 @@ final class SetupModel: ObservableObject {
 
     private func monitorOperation(operationLabel: String) async {
         while isOperating {
-            if let tail = sidecarDiagnosticTail(), !tail.isEmpty {
-                operationStage = Self.operationStage(from: tail, fallback: "正在执行\(operationLabel)…")
-                operationLog = "正在执行\(operationLabel)…\n\n最近日志：\n\(tail)"
+            let currentSize = Self.sidecarLogFileSize()
+            if currentSize != lastObservedLogSize {
+                lastObservedLogSize = currentSize
+                if let tail = sidecarDiagnosticTail(), !tail.isEmpty {
+                    operationStage = Self.operationStage(from: tail, fallback: "正在执行\(operationLabel)…")
+                    operationLog = String("正在执行\(operationLabel)…\n\n最近日志：\n\(tail)".suffix(131_072))
+                }
             }
             try? await Task.sleep(nanoseconds: 700_000_000)
+        }
+    }
+
+    private func appendOperationLog(_ text: String) {
+        operationLog.append(contentsOf: text)
+        if operationLog.count > 131_072 {
+            operationLog = String(operationLog.suffix(131_072))
+        }
+    }
+
+    private func appendInstallerLog(_ text: String) {
+        installerLog.append(contentsOf: text)
+        if installerLog.count > 65_536 {
+            installerLog = String(installerLog.suffix(65_536))
         }
     }
 
@@ -871,7 +993,7 @@ final class SetupModel: ObservableObject {
         Task { @MainActor [weak self] in
             let result = await worker.value
             guard let self else { return }
-            self.installerLog += result.output
+            self.appendInstallerLog(result.output)
             self.isInstalling = false
             self.message = result.status == 0
                 ? "连接和断开快捷指令导入完成；已尝试设置 ⌃⌥⌘S / ⌃⌥⌘D，请查看安装日志。"
@@ -900,7 +1022,7 @@ final class SetupModel: ObservableObject {
         }
         Task { @MainActor [weak self] in
             let result = await worker.value
-            self?.installerLog += result.output
+            self?.appendInstallerLog(result.output)
             self?.isInstalling = false
             self?.message = result.status == 0
                 ? "安装完成。请继续完成下面的权限和快捷指令步骤。"
@@ -1034,14 +1156,27 @@ final class SetupModel: ObservableObject {
         let mac = ProcessInfo.processInfo.operatingSystemVersion
         let macOK = mac.majorVersion >= 13
         let transport = usbTransportStatus()
-        let session = sidecarSessionStatus(config: config)
         let physicalDisplay = physicalDisplayPresent()
         let wifi = wifiStatus()
         let bluetooth = bluetoothStatus()
         let handoff = handoffStatus()
-        let betterDisplay = betterDisplayStatus(backend: config.virtualDisplayBackend)
-        let builtinVirtual = builtinVirtualDisplayStatus()
-        let betterDisplayRequired = !physicalDisplay && config.virtualDisplayBackend == .betterdisplay
+        // These probes can invoke third-party CLIs or a resident display
+        // helper. Do not pay that cost while a physical display is present or
+        // when the selected backend cannot use the result.
+        let builtinVirtual = (!physicalDisplay && config.virtualDisplayBackend != .betterdisplay)
+            ? builtinVirtualDisplayStatus()
+            : (ok: true, detail: "当前路径不需要项目内置虚拟屏；拔掉显示器后会按配置检查")
+        let shouldCheckBetterDisplay = !physicalDisplay &&
+            (config.virtualDisplayBackend == .betterdisplay ||
+             (config.virtualDisplayBackend == .auto && !builtinVirtual.ok))
+        let betterDisplay = shouldCheckBetterDisplay
+            ? betterDisplayStatus(backend: config.virtualDisplayBackend)
+            : (ok: true, detail: physicalDisplay
+               ? "当前连接有实体显示器；BetterDisplay 只在无显示器方案中检查"
+               : "当前自动方案优先使用项目内置虚拟屏；BetterDisplay 只作为后备")
+        let betterDisplayRequired = !physicalDisplay &&
+            (config.virtualDisplayBackend == .betterdisplay ||
+             (config.virtualDisplayBackend == .auto && !builtinVirtual.ok))
         let configExists = FileManager.default.fileExists(
             atPath: "\(NSHomeDirectory())/.config/sidecar-auto/config")
         let shortcuts = shortcutsStatus()
@@ -1061,8 +1196,6 @@ final class SetupModel: ObservableObject {
                       ? "已找到配置，目标名称：\(config.iPadName)"
                       : "还没有配置文件，保存下面的配置即可创建",
                       state: configExists ? .good : .action, action: .refresh, actionTitle: "重新检查"),
-            CheckItem(id: "session", title: "当前随航会话", detail: session.detail,
-                      state: session.state, action: .refresh, actionTitle: "重新检查", required: false),
             CheckItem(id: "transport", title: "当前连接方式", detail: transport.detail,
                       state: transport.ok ? .good : .action,
                       action: .refresh, actionTitle: "重新检查"),
@@ -1072,13 +1205,9 @@ final class SetupModel: ObservableObject {
                       actionTitle: transport.isWired ? nil : "重新检查",
                       required: !transport.isWired),
             CheckItem(id: "bluetooth", title: "蓝牙", detail: bluetooth.detail,
-                      state: transport.isWired ? .optional : (bluetooth.ok ? .good : .action),
-                      action: transport.isWired ? nil : (bluetooth.ok ? .refresh : .bluetooth),
-                      actionTitle: transport.isWired ? nil : (bluetooth.ok ? "重新检查" :
-                        (bluetooth.detail.contains("已经申请过") ||
-                         bluetooth.detail.contains("已拒绝") ||
-                         bluetooth.detail.contains("系统限制")
-                         ? "打开蓝牙设置" : "申请一次")),
+                      state: transport.isWired ? .optional : bluetooth.checkState,
+                      action: transport.isWired ? nil : bluetooth.action,
+                      actionTitle: transport.isWired ? nil : bluetooth.actionTitle,
                       required: !transport.isWired),
             CheckItem(id: "handoff", title: "Mac 接力（Handoff）", detail: handoff.detail,
                       // A positive result here means the Mac-side preference
@@ -1090,12 +1219,6 @@ final class SetupModel: ObservableObject {
                       action: transport.isWired ? nil : (handoff.ok ? .refresh : .handoff),
                       actionTitle: transport.isWired ? nil : (handoff.ok ? "重新检查" : "打开 Mac 接力设置"),
                       required: !transport.isWired),
-            CheckItem(id: "accessibility", title: "辅助功能权限", detail:
-                      "当前连接路径不需要辅助功能权限；只有启用需要 UI 自动化的可选功能时才需要手动授权。",
-                      state: .optional, action: nil, actionTitle: nil, required: false),
-            CheckItem(id: "screen", title: "屏幕录制权限", detail:
-                      "当前连接和显示状态检查不需要屏幕录制权限；BetterDisplay 如有额外要求会在其应用内提示。",
-                      state: .optional, action: nil, actionTitle: nil, required: false),
             CheckItem(id: "betterdisplay", title: "BetterDisplay", detail: betterDisplay.detail,
                       state: betterDisplayRequired
                         ? (betterDisplay.ok ? .good : .action) : .optional,
@@ -1180,29 +1303,6 @@ final class SetupModel: ObservableObject {
         return (false, false, "暂时无法确认 iPad 数据线状态；连接前会再次检查。")
     }
 
-    private nonisolated static func sidecarSessionStatus(config: SetupConfig) ->
-        (state: CheckState, detail: String) {
-        let path = "\(NSHomeDirectory())/.local/bin/sidecarctl"
-        guard commandExists(path) else {
-            return (.optional, "尚未安装 sidecarctl；安装工具后可读取当前随航会话。")
-        }
-        let output = command(path, ["status", config.iPadName], timeout: 8)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let reportsConnected = output.split(whereSeparator: { $0 == "\n" || $0 == "\r" })
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
-            .contains { line in
-                line == "connected" || line == "state=connected" ||
-                line.contains(" state=connected")
-            }
-        if reportsConnected {
-            return (.good, "目标 iPad 当前报告为已连接；状态检查不会重复发起连接。")
-        }
-        if output.isEmpty {
-            return (.unknown, "暂时无法读取目标 iPad 的随航会话；连接前会再次确认。")
-        }
-        return (.optional, "目标 iPad 当前没有已确认的随航会话；点击连接一次后才会发起请求。")
-    }
-
     private nonisolated static func physicalDisplayPresent() -> Bool {
         let path = "\(NSHomeDirectory())/.local/bin/display-state"
         guard commandExists(path) else { return false }
@@ -1248,18 +1348,15 @@ final class SetupModel: ObservableObject {
         return (on, on ? "Mac Wi-Fi 已开启（接口 \(device)）" : "Mac Wi-Fi 未开启，请先打开 Wi-Fi")
     }
 
-    private nonisolated static func bluetoothStatus() -> (ok: Bool, detail: String) {
+    private nonisolated static func bluetoothStatus() -> BluetoothStatus {
         let output = command("/usr/sbin/system_profiler", ["SPBluetoothDataType", "-json"])
         let lowercased = output.lowercased()
         let radioOn = lowercased.contains("attrib_on") ||
             lowercased.contains("state: on") ||
             lowercased.contains("bluetooth power: on")
-        let authorization: String
-        let authorized: Bool
-        let bundlePath = Bundle.main.bundlePath
-        let locationHint = bundlePath.hasPrefix("/Applications/")
-            ? ""
-            : " 当前运行副本位于 \(NSString(string: bundlePath).abbreviatingWithTildeInPath)。"
+        let authorizationStatus: BluetoothAuthorizationStatus
+        let permissionWasRequested = bluetoothPermissionWasRequested()
+        let runningFromApplications = Bundle.main.bundlePath.hasPrefix("/Applications/")
         if #available(macOS 10.15, *) {
             // CoreBluetooth's class property can be stale when read from the
             // detached status worker immediately after returning from System
@@ -1273,38 +1370,51 @@ final class SetupModel: ObservableObject {
             }
             switch currentAuthorization {
             case .allowedAlways:
-                authorization = "App 的蓝牙隐私授权已允许"
-                authorized = true
+                authorizationStatus = .allowed
             case .denied:
-                authorization = bluetoothPermissionWasRequested()
-                    ? "当前运行副本未获得蓝牙授权；如果系统设置已打开开关，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能把它识别成新的 App。\(locationHint)"
-                    : "App 的蓝牙隐私授权已拒绝"
-                authorized = false
+                authorizationStatus = .denied
             case .restricted:
-                authorization = "App 的蓝牙隐私授权受到系统限制"
-                authorized = false
+                authorizationStatus = .restricted
             case .notDetermined:
-                authorization = bluetoothPermissionWasRequested()
-                    ? "已经申请过蓝牙隐私授权；如果系统设置已为另一个副本开启，请退出后从同一个 Sidecar Auto Setup.app 重新打开。未签名开发版换路径或重建后，macOS 可能重新识别授权对象\(locationHint)"
-                    : "尚未申请蓝牙隐私授权；只有点击“申请 / 开启”时才会由 macOS 显示确认"
-                authorized = false
+                authorizationStatus = .notDetermined
             @unknown default:
-                authorization = "无法识别 App 的蓝牙隐私授权状态"
-                authorized = false
+                authorizationStatus = .unknown
             }
         } else {
-            authorization = "当前 macOS 无法读取蓝牙隐私授权状态"
-            authorized = false
+            authorizationStatus = .unknown
         }
         let detail: String
-        if radioOn && authorized {
-            detail = "Mac 蓝牙无线电已开启；\(authorization)"
+        if radioOn && authorizationStatus == .allowed {
+            detail = "Mac 蓝牙已开启，Sidecar Auto 已获授权。"
         } else if !radioOn {
-            detail = "Mac 蓝牙无线电未开启或状态无法读取；\(authorization)"
+            detail = "Mac 蓝牙未开启；请打开蓝牙后重新检查。"
         } else {
-            detail = "Mac 蓝牙无线电已开启；\(authorization)"
+            switch authorizationStatus {
+            case .notDetermined:
+                detail = permissionWasRequested && !runningFromApplications
+                    ? "Mac 蓝牙已开启，但当前运行的是仓库/开发副本；系统设置里的授权可能属于应用程序中的另一个副本。请从 /Applications/Sidecar Auto Setup.app 启动。"
+                    : permissionWasRequested
+                    ? "Mac 蓝牙已开启，但授权窗口尚未完成；请打开系统设置确认当前 App。"
+                    : "Mac 蓝牙已开启，首次使用请点击“申请一次”并允许。"
+            case .denied, .restricted:
+                detail = permissionWasRequested && !runningFromApplications
+                    ? "Mac 蓝牙已开启，但当前运行的是仓库/开发副本；系统设置里的授权可能属于应用程序中的另一个副本。请从 /Applications/Sidecar Auto Setup.app 启动。"
+                    : permissionWasRequested
+                    ? "Mac 蓝牙已开启，但当前运行副本未获授权；请统一从 /Applications 中的 App 启动后重新检查。"
+                    : "Mac 蓝牙已开启，但 App 被拒绝；请在系统设置 → 隐私与安全性 → 蓝牙中允许它。"
+            case .allowed:
+                detail = "Mac 蓝牙已开启，正在同步 App 授权状态。"
+            case .unknown:
+                detail = "Mac 蓝牙已开启，但暂时无法读取 App 授权状态。"
+            }
         }
-        return (radioOn && authorized, detail)
+        return BluetoothStatus(
+            radioOn: radioOn,
+            authorization: authorizationStatus,
+            permissionWasRequested: permissionWasRequested,
+            runningFromApplications: runningFromApplications,
+            detail: detail
+        )
     }
 
     private nonisolated static var bluetoothPermissionMarkerURL: URL {
@@ -1783,6 +1893,7 @@ private struct SetupView: View {
     @State private var section: SetupSection = .overview
     @AppStorage("sidecarAutoSetupHasSeenWizard") private var hasSeenWizard = false
     @State private var showingWizard = false
+    @State private var showAdvancedChecks = false
 
     var body: some View {
         NavigationSplitView {
@@ -2075,21 +2186,29 @@ private struct SetupView: View {
                         : "未检测到 iPad 数据线，连接时会使用无线 Sidecar。Mac 端状态可在这里读取，iPad 端接力仍需你在 iPad 上确认。",
                     ids: requiredCheckIDs
                 )
-                DisclosureGroup {
+                DisclosureGroup(isExpanded: $showAdvancedChecks) {
                     VStack(alignment: .leading, spacing: 14) {
-                        checkGroup(
-                            title: "可选诊断和工具",
-                            subtitle: "这些项目不会阻塞普通连接，只有使用对应功能时才需要处理。",
-                            ids: optionalCheckIDs
-                        )
+                        if !optionalCheckIDs.isEmpty {
+                            checkGroup(
+                                title: "快捷指令",
+                                subtitle: "只在你需要键盘快捷键时配置；不会自动连接 iPad。",
+                                ids: optionalCheckIDs
+                            )
+                        }
                         securitySettingsPanel
                         betterDisplayInspectionPanel
                         loginAgentPanel
                     }
                     .padding(.top, 8)
                 } label: {
-                    Label("查看可选诊断和高级功能", systemImage: "ellipsis.circle")
-                        .font(.headline)
+                    HStack(spacing: 8) {
+                        Label("可选诊断和高级功能", systemImage: "ellipsis.circle")
+                            .font(.headline)
+                        Spacer()
+                        Text(optionalSummary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
             if !model.installerLog.isEmpty { installerPanel }
@@ -2111,6 +2230,13 @@ private struct SetupView: View {
         let optional = Set(model.checks.filter { !$0.required }.map(\.id))
         let preferred = ["shortcuts"]
         return preferred.filter { optional.contains($0) }
+    }
+
+    private var optionalSummary: String {
+        let items = model.checks.filter { !$0.required }
+        let ready = items.filter { $0.state == .good || $0.state == .partial }.count
+        if items.isEmpty { return "按需查看" }
+        return "\(ready)/\(items.count) 已确认 · 不影响连接"
     }
 
     private var connectionReadinessPanel: some View {
@@ -2517,6 +2643,7 @@ private struct StatusPill: View {
             itemID == "handoff" && state == .good ? "Mac 已开启 · iPad 待确认"
                 : state == .good ? "正常"
                 : state == .partial ? "Mac 已开启 · iPad 待确认"
+                : state == .permission ? "需 App 授权"
                 : state == .action ? "需要处理"
                 : state == .warning ? "注意"
                 : state == .optional ? "可选"
