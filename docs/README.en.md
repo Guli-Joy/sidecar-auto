@@ -66,6 +66,7 @@ Use `wired` or `wireless` instead of `auto` when troubleshooting a specific tran
 The default `auto` provider prefers the built-in 1920×1080, 60 Hz virtual screen. It does not require BetterDisplay, but it relies on undocumented macOS virtual-display APIs.
 
 On a Mac without a physical monitor, **Start Sidecar Auto quietly after login** is required. The app must start in the logged-in desktop session before it can create the virtual screen that lets the iPad become the main display. Enable it in Connection Settings and save the configuration; it never connects or disconnects Sidecar by itself.
+The login launcher waits for the graphical session and retries a startup that exits during the handoff; it does not keep reconnecting Sidecar in the background.
 
 Choose BetterDisplay when you need HiDPI, additional resolutions, or advanced layouts:
 

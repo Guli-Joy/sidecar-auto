@@ -77,6 +77,7 @@ restore_installation() {
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-login-start.sh \
         sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
@@ -155,6 +156,7 @@ check_sources() {
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
         "$SCRIPT_ROOT/sidecar-login-ready.sh" \
+        "$SCRIPT_ROOT/sidecar-login-start.sh" \
         "$SCRIPT_ROOT/sidecar-headless-display.sh" \
         "$SCRIPT_ROOT/sidecar-doctor.sh" \
         "$SCRIPT_ROOT/install-sidecar-shortcuts.sh"; do
@@ -269,6 +271,7 @@ build_outputs() {
         "$SCRIPT_ROOT/sidecar-disconnect-once.sh" \
         "$SCRIPT_ROOT/sidecar-hotkey.sh" \
         "$SCRIPT_ROOT/sidecar-login-ready.sh" \
+        "$SCRIPT_ROOT/sidecar-login-start.sh" \
         "$SCRIPT_ROOT/sidecar-headless-display.sh" \
         "$SCRIPT_ROOT/sidecar-doctor.sh" \
         "$SCRIPT_ROOT/install-sidecar-shortcuts.sh"; do
@@ -352,6 +355,7 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-login-start.sh \
         sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
@@ -379,6 +383,7 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-login-start.sh \
         sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
@@ -400,6 +405,7 @@ EOF
         sidecar-disconnect-once.sh \
         sidecar-hotkey.sh \
         sidecar-login-ready.sh \
+        sidecar-login-start.sh \
         sidecar-headless-display.sh \
         sidecar-doctor.sh \
         install-sidecar-shortcuts.sh; do
@@ -447,6 +453,7 @@ printf '  %s\n' \
     "$BIN_DIR/sidecar-disconnect-once.sh" \
     "$BIN_DIR/sidecar-ipad-usb-detect.sh" \
     "$BIN_DIR/sidecar-login-ready.sh" \
+    "$BIN_DIR/sidecar-login-start.sh" \
     "$BIN_DIR/sidecar-headless-display.sh" \
     "$BIN_DIR/sidecar-doctor.sh" \
     "$BIN_DIR/install-sidecar-shortcuts.sh"

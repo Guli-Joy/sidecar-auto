@@ -10,6 +10,9 @@
   `/Applications` before enabling launch-on-login.
 - Added regression coverage for headless preparation with a physical display,
   an already-online helper, and the disabled configuration path.
+- Hardened login startup with a session-ready wrapper, explicit `HOME`/`PATH`,
+  crash retry, and App-side retries when WindowServer or the virtual-display
+  helper is still settling.
 - Added an in-app GitHub Releases update checker and arm64 DMG downloader.
 - Fixed a macOS `FileHandle` output-reader race that could crash the setup app while
   a helper process was finishing, normalized legacy literal `$HOME` executable paths

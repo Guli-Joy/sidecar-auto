@@ -72,6 +72,8 @@ cd sidecar-auto
 
 默认的 `auto` provider 优先使用项目内置虚拟屏，提供固定的 1920×1080、60Hz 屏幕。它不需要 BetterDisplay，但依赖 macOS 未公开的虚拟显示接口。
 
+登录启动器会等待图形会话就绪；如果 App 或虚拟屏工具在登录瞬间退出，会自动重试，但不会在后台反复连接或断开 Sidecar。
+
 需要 HiDPI、更多分辨率或复杂排列时，可以在配置中选择 BetterDisplay：
 
 ```sh

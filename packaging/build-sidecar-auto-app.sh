@@ -135,6 +135,7 @@ for required in \
     "$ROOT/scripts/sidecar-hotkey.sh" \
     "$ROOT/scripts/sidecar-ipad-usb-detect.sh" \
     "$ROOT/scripts/sidecar-login-ready.sh" \
+    "$ROOT/scripts/sidecar-login-start.sh" \
     "$ROOT/scripts/sidecar-headless-display.sh" \
     "$ROOT/scripts/install-sidecar-shortcuts.sh" \
     "$ROOT/config/config.example" \
@@ -229,6 +230,7 @@ for script in \
     sidecar-hotkey.sh \
     sidecar-ipad-usb-detect.sh \
     sidecar-login-ready.sh \
+    sidecar-login-start.sh \
     sidecar-headless-display.sh \
     install-sidecar-shortcuts.sh; do
     bash -n "$ROOT/scripts/$script" || fail "Shell 语法检查失败：$script"

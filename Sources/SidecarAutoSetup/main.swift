@@ -391,12 +391,19 @@ final class SetupModel: ObservableObject {
         let script = Self.headlessDisplayScriptURL()
         guard fileManager.isExecutableFile(atPath: script) else { return }
         headlessStartTask?.cancel()
+        let loginLaunch = ProcessInfo.processInfo.environment["SIDECAR_AUTO_LOGIN_START"] == "1"
         headlessStartTask = Task.detached(priority: .userInitiated) {
             // WindowServer may still be bringing up the Aqua session when the
-            // login agent fires. Give it a short settling window first.
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            guard !Task.isCancelled else { return }
-            _ = Self.execute(executable: script, arguments: [])
+            // login agent fires. A login launch gets bounded retries because a
+            // single early helper failure used to leave the Mac headless until
+            // the user opened the app manually.
+            let delays: [UInt64] = loginLaunch ? [3, 8, 15] : [2]
+            for delay in delays {
+                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                let result = Self.execute(executable: script, arguments: [])
+                if result.status == 0 { return }
+            }
         }
     }
 
@@ -1739,6 +1746,7 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
+            "sidecar-login-start.sh",
             "sidecar-headless-display.sh",
             "sidecar-doctor.sh",
             "install-sidecar-shortcuts.sh"
@@ -2079,6 +2087,10 @@ final class SetupModel: ObservableObject {
         "\(NSHomeDirectory())/.local/bin/sidecar-headless-display.sh"
     }
 
+    private nonisolated static func loginStartScriptURL() -> String {
+        "\(NSHomeDirectory())/.local/bin/sidecar-login-start.sh"
+    }
+
     private nonisolated static func appExecutableURL() -> String {
         if let executableURL = Bundle.main.executableURL {
             return executableURL.path
@@ -2086,8 +2098,19 @@ final class SetupModel: ObservableObject {
         return Bundle.main.bundleURL.appendingPathComponent("Contents/MacOS/SidecarAutoSetup").path
     }
 
+    private nonisolated static func headlessAgentPrint() -> String? {
+        let result = execute(executable: "/bin/launchctl", arguments: ["print", headlessAgentTarget()])
+        guard result.status == 0 else { return nil }
+        return result.output
+    }
+
     private nonisolated static func headlessAgentIsLoaded() -> Bool {
-        execute(executable: "/bin/launchctl", arguments: ["print", headlessAgentTarget()]).status == 0
+        headlessAgentPrint() != nil
+    }
+
+    private nonisolated static func headlessAgentIsRunning() -> Bool {
+        guard let output = headlessAgentPrint() else { return false }
+        return output.contains("\nstate = running") || output.contains("\njob state = running")
     }
 
     private nonisolated static func headlessAgentStatus(config: SetupConfig) ->
@@ -2108,11 +2131,17 @@ final class SetupModel: ObservableObject {
         guard FileManager.default.isExecutableFile(atPath: headlessDisplayScriptURL()) else {
             return (false, "尚未安装登录后虚拟屏脚本；请先点击“安装 / 修复工具”。", "安装 / 修复工具")
         }
+        guard FileManager.default.isExecutableFile(atPath: loginStartScriptURL()) else {
+            return (false, "尚未安装登录启动器；请先点击“安装 / 修复工具”。", "安装 / 修复工具")
+        }
         if !config.autoStartHeadlessDisplay {
             return (false, "未开启；登录后不会静默启动 Sidecar Auto，也不会在无实体显示器时准备虚拟屏。", "开启静默启动")
         }
-        if headlessAgentIsLoaded() {
+        if headlessAgentIsRunning() {
             return (true, "已开启：登录进入桌面后会静默启动 Sidecar Auto；没有实体显示器时由 App 准备项目内置虚拟屏，不会自动连接或断开 iPad。", "停用静默启动")
+        }
+        if headlessAgentIsLoaded() {
+            return (false, "登录项已加载，但 Sidecar Auto 当前没有运行；点击重新加载，或重新登录以验证启动。", "重新加载")
         }
         if FileManager.default.fileExists(atPath: headlessAgentURL().path) {
             return (false, "已创建 Sidecar Auto 登录项但当前未加载；点击按钮可重新加载。", "重新加载")
@@ -2124,9 +2153,15 @@ final class SetupModel: ObservableObject {
         let logBase = "\(NSHomeDirectory())/Library/Logs/sidecar-auto-login"
         let object: [String: Any] = [
             "Label": headlessAgentLabel,
-            "ProgramArguments": [appExecutableURL()],
-            "EnvironmentVariables": ["SIDECAR_AUTO_LOGIN_START": "1"],
+            "ProgramArguments": [loginStartScriptURL(), appExecutableURL()],
+            "EnvironmentVariables": [
+                "HOME": NSHomeDirectory(),
+                "PATH": "/usr/bin:/bin:/usr/sbin:/sbin:\(NSHomeDirectory())/.local/bin",
+                "SIDECAR_AUTO_LOGIN_START": "1"
+            ],
             "RunAtLoad": true,
+            "KeepAlive": ["SuccessfulExit": false],
+            "ThrottleInterval": 10,
             "ProcessType": "Interactive",
             "LimitLoadToSessionType": "Aqua",
             "StandardOutPath": "\(logBase).out.log",
@@ -2142,6 +2177,7 @@ final class SetupModel: ObservableObject {
             try manager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             if enabled {
                 guard manager.isExecutableFile(atPath: appExecutableURL()),
+                      manager.isExecutableFile(atPath: loginStartScriptURL()),
                       manager.isExecutableFile(atPath: headlessDisplayScriptURL()),
                       manager.isExecutableFile(atPath: "\(NSHomeDirectory())/.local/bin/sidecar-virtual-display"),
                       let data = headlessAgentPlist() else {
@@ -2194,7 +2230,7 @@ final class SetupModel: ObservableObject {
     private func toggleHeadlessAgent() {
         guard !isManagingHeadlessAgent else { return }
         isManagingHeadlessAgent = true
-        let enable = !Self.headlessAgentIsLoaded()
+        let enable = !Self.headlessAgentIsLoaded() || !Self.headlessAgentIsRunning()
         config.autoStartHeadlessDisplay = enable
         do {
             try writeConfig(config)
@@ -2387,6 +2423,7 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
+            "sidecar-login-start.sh",
             "sidecar-headless-display.sh",
             "sidecar-doctor.sh",
             "install-sidecar-shortcuts.sh"
@@ -2417,6 +2454,7 @@ final class SetupModel: ObservableObject {
             "sidecar-disconnect-once.sh",
             "sidecar-hotkey.sh",
             "sidecar-login-ready.sh",
+            "sidecar-login-start.sh",
             "sidecar-headless-display.sh",
             "sidecar-doctor.sh",
             "install-sidecar-shortcuts.sh"
