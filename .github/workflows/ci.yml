@@ -30,6 +30,14 @@ jobs:
         run: |
           set -euo pipefail
           bash tests/test_connect_controller.sh
+      - name: Run configuration validation tests
+        run: |
+          set -euo pipefail
+          bash tests/test_connect_config_validation.sh
+      - name: Run command timeout regression test
+        run: |
+          set -euo pipefail
+          bash tests/test_recovery_timeout.sh
       - name: Build bundled helpers and CLI
         run: ./installer/install-sidecar-auto.sh --build-only
       - name: Build setup app bundle

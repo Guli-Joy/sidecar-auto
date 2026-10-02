@@ -52,4 +52,32 @@ printf 'IPAD_USB_SERIAL_NUMBER="SERIAL-TWO"\n' >"$CONFIG"
 run_case "configured serial" 0 "SERIAL-TWO" "$(ipad_fixture iPad-1 "iPad Pro" SERIAL-ONE)
 $(ipad_fixture iPad-2 "iPad mini" SERIAL-TWO)"
 
+# Configuration is data.  A shell statement must never be evaluated while
+# loading it, while a supported allowlisted setting must still be honored.
+MARKER="$TMP/config-was-executed"
+cat >"$CONFIG" <<EOF
+touch "$MARKER"
+IPAD_USB_SERIAL_NUMBER="SERIAL-TWO"
+EOF
+run_case "config shell syntax is ignored" 0 "SERIAL-TWO" "$(ipad_fixture iPad-1 "iPad Pro" SERIAL-ONE)
+$(ipad_fixture iPad-2 "iPad mini" SERIAL-TWO)"
+[ ! -e "$MARKER" ] || {
+    printf 'FAIL config shell syntax was executed\n' >&2
+    exit 1
+}
+
+# A group/other-writable config is not trusted.  The detector must ignore its
+# serial override instead of consuming values an unrelated account could edit.
+printf 'IPAD_USB_SERIAL_NUMBER="SERIAL-TWO"\n' >"$CONFIG"
+chmod 0666 "$CONFIG"
+run_case "world-writable config is ignored" 3 "USB_IPAD_AMBIGUOUS" "$(ipad_fixture iPad-1 "iPad Pro" SERIAL-ONE)
+$(ipad_fixture iPad-2 "iPad mini" SERIAL-TWO)"
+
+chmod 0600 "$CONFIG"
+cat >"$CONFIG" <<'EOF'
+export IPAD_USB_SERIAL_NUMBER="SERIAL-TWO" # keep the selected device
+EOF
+run_case "export and inline comment are parsed as data" 0 "SERIAL-TWO" "$(ipad_fixture iPad-1 "iPad Pro" SERIAL-ONE)
+$(ipad_fixture iPad-2 "iPad mini" SERIAL-TWO)"
+
 printf 'USB detector tests passed\n'

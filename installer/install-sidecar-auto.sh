@@ -20,7 +20,10 @@ CONFIG_DIR="${SIDECAR_AUTO_CONFIG_DIR:-$HOME/.config/sidecar-auto}"
 CONFIG_FILE="$CONFIG_DIR/config"
 STAGE=""
 INSTALL_STAGE=""
+INSTALL_BACKUP=""
+INSTALL_ROLLBACK=0
 CONFIG_STAGE=""
+CONFIG_INSTALLED=0
 BUILD_ONLY=0
 
 fail() { printf '安装失败：%s\n' "$*" >&2; exit 1; }
@@ -42,11 +45,58 @@ USAGE
 done
 
 cleanup() {
+    if [ "$INSTALL_ROLLBACK" -eq 1 ]; then
+        if ! restore_installation; then
+            printf '安装回滚未能完整恢复；保留备份目录：%s\n' "$INSTALL_BACKUP" >&2
+        else
+            rm -rf "$INSTALL_BACKUP"
+            INSTALL_BACKUP=""
+        fi
+    fi
     [ -z "$STAGE" ] || rm -rf "$STAGE"
     [ -z "$INSTALL_STAGE" ] || rm -rf "$INSTALL_STAGE"
+    [ -z "$INSTALL_BACKUP" ] || [ "$INSTALL_ROLLBACK" -eq 1 ] || rm -rf "$INSTALL_BACKUP"
     [ -z "$CONFIG_STAGE" ] || rm -f "$CONFIG_STAGE"
 }
 trap cleanup EXIT
+
+restore_installation() {
+    local name failed=0
+    # Remove every replacement that may have been moved into place, then put
+    # back only files that existed before this transaction.  Missing backup
+    # entries intentionally remain absent, matching the pre-install state.
+    for name in \
+        sidecarctl \
+        display-state \
+        sidecar-bluetooth-radio \
+        sidecar-virtual-display \
+        sidecar-connect-once.sh \
+        sidecar-connect-wireless-once.sh \
+        sidecar-runtime-common.sh \
+        sidecar-ipad-usb-detect.sh \
+        sidecar-disconnect-once.sh \
+        sidecar-hotkey.sh \
+        sidecar-login-ready.sh \
+        sidecar-doctor.sh \
+        install-sidecar-shortcuts.sh; do
+        if [ -e "$INSTALL_BACKUP/$name" ] || [ -L "$INSTALL_BACKUP/$name" ]; then
+            rm -f "$BIN_DIR/$name" 2>/dev/null || failed=1
+            mv -f "$INSTALL_BACKUP/$name" "$BIN_DIR/$name" 2>/dev/null || failed=1
+        elif [ -f "$INSTALL_BACKUP/.absent.$name" ]; then
+            # The target did not exist before this transaction.  Remove it
+            # only when a replacement was actually installed; untouched old
+            # files have neither a backup nor an absent marker.
+            rm -f "$BIN_DIR/$name" 2>/dev/null || failed=1
+        fi
+    done
+    if [ "$CONFIG_INSTALLED" -eq 1 ]; then
+        rm -f "$CONFIG_FILE" 2>/dev/null || failed=1
+        CONFIG_INSTALLED=0
+    fi
+    [ "$failed" -eq 0 ] || return 1
+    INSTALL_ROLLBACK=0
+    return 0
+}
 
 check_platform() {
     [ "$(uname -s)" = "Darwin" ] || fail "此安装程序只能在 macOS 上运行"
@@ -259,6 +309,10 @@ install_outputs() {
     INSTALL_STAGE="$BIN_DIR/.sidecar-auto-install.$$"
     rm -rf "$INSTALL_STAGE"
     mkdir -p "$INSTALL_STAGE"
+    INSTALL_BACKUP="$BIN_DIR/.sidecar-auto-backup.$$"
+    rm -rf "$INSTALL_BACKUP"
+    mkdir -p "$INSTALL_BACKUP"
+    INSTALL_ROLLBACK=1
 
     # Prepare a new configuration before replacing any installed executable.
     # It is installed with a same-directory rename after the binaries are ready.
@@ -302,8 +356,30 @@ EOF
         chmod 0755 "$INSTALL_STAGE/$name"
     done
 
-    # Rename each validated file into place. Rename is atomic per executable,
-    # and no existing file is removed before its replacement is ready.
+    # Move the old set aside before replacing any member.  Every replacement
+    # has already been built and validated in INSTALL_STAGE; if any move fails,
+    # the EXIT trap restores the complete previous set instead of leaving a
+    # mixture of old and new helpers.
+    for name in \
+        sidecarctl \
+        display-state \
+        sidecar-bluetooth-radio \
+        sidecar-virtual-display \
+        sidecar-connect-once.sh \
+        sidecar-connect-wireless-once.sh \
+        sidecar-runtime-common.sh \
+        sidecar-ipad-usb-detect.sh \
+        sidecar-disconnect-once.sh \
+        sidecar-hotkey.sh \
+        sidecar-login-ready.sh \
+        sidecar-doctor.sh \
+        install-sidecar-shortcuts.sh; do
+        if [ -e "$BIN_DIR/$name" ] || [ -L "$BIN_DIR/$name" ]; then
+            mv -f "$BIN_DIR/$name" "$INSTALL_BACKUP/$name"
+        else
+            : > "$INSTALL_BACKUP/.absent.$name"
+        fi
+    done
     for name in \
         sidecarctl \
         display-state \
@@ -326,6 +402,7 @@ EOF
     if [ -n "$CONFIG_STAGE" ]; then
         if [ ! -e "$CONFIG_FILE" ]; then
             mv "$CONFIG_STAGE" "$CONFIG_FILE"
+            CONFIG_INSTALLED=1
         else
             rm -f "$CONFIG_STAGE"
         fi
@@ -333,6 +410,9 @@ EOF
     fi
     rm -rf "$INSTALL_STAGE"
     INSTALL_STAGE=""
+    rm -rf "$INSTALL_BACKUP"
+    INSTALL_BACKUP=""
+    INSTALL_ROLLBACK=0
 }
 
 check_platform

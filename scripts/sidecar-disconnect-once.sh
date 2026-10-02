@@ -5,7 +5,13 @@
 set -u
 
 CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
-[ -r "$CONFIG" ] && . "$CONFIG"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
+    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
+    exit 127
+fi
+. "$SCRIPT_DIR/sidecar-runtime-common.sh"
+config_load "$CONFIG"
 
 # Shortcuts asks for a one-time “Run Shell Script” confirmation before this
 # process starts.  The generated shortcut sets this flag so the setup helper
@@ -39,17 +45,11 @@ SLUG="disconnect-sidecar"
 ACTIVE_VIRTUAL_DISPLAY_BACKEND=""
 
 LOCK_DIR="$HOME/Library/Caches/sidecar-auto/explicit-action.lock"
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
-    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
-    exit 127
-fi
-. "$SCRIPT_DIR/sidecar-runtime-common.sh"
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$LOCK_DIR")" 2>/dev/null || true
 mark_shortcut_invocation "$SLUG"
 notify() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
-    /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+    run_with_timeout 5 /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true
 on run argv
     display notification (item 2 of argv) with title (item 1 of argv)
 end run
@@ -57,13 +57,13 @@ APPLESCRIPT
 }
 play_sound() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
-    [ -x /usr/bin/afplay ] && [ -r "$1" ] && /usr/bin/afplay "$1" >/dev/null 2>&1 || true
+    [ -x /usr/bin/afplay ] && [ -r "$1" ] && run_with_timeout 5 /usr/bin/afplay "$1" >/dev/null 2>&1 || true
 }
 speak() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
     [ "${SPEAK:-1}" = "0" ] && return 0
     [ -x /usr/bin/say ] || return 0
-    /usr/bin/say -v "$VOICE" "$1" >/dev/null 2>&1 || /usr/bin/say "$1" >/dev/null 2>&1 || true
+    run_with_timeout 10 /usr/bin/say -v "$VOICE" "$1" >/dev/null 2>&1 || run_with_timeout 10 /usr/bin/say "$1" >/dev/null 2>&1 || true
 }
 feedback() {
     play_sound "$1"
@@ -78,7 +78,30 @@ run_with_timeout() {
         log "cannot run bounded command: /usr/bin/perl unavailable"
         return 125
     fi
-    /usr/bin/perl -e 'alarm shift; exec @ARGV' "$seconds" "$@"
+    /usr/bin/perl -e '
+        use POSIX qw(setpgid);
+        my $seconds = shift;
+        my $child = fork();
+        exit 127 unless defined $child;
+        if ($child == 0) {
+            setpgid(0, 0);
+            exec @ARGV;
+            exit 127;
+        }
+        my $grouped = setpgid($child, $child) == 0;
+        $SIG{ALRM} = sub {
+            kill "TERM", $grouped ? -$child : $child;
+            select undef, undef, undef, 0.2;
+            kill "KILL", $grouped ? -$child : $child;
+            waitpid($child, 0);
+            exit 124;
+        };
+        alarm $seconds;
+        waitpid($child, 0);
+        my $status = $?;
+        alarm 0;
+        exit(($status & 127) ? 128 + ($status & 127) : ($status >> 8));
+    ' "$seconds" "$@"
 }
 run_sidecar_status() {
     run_with_timeout "$SIDECAR_STATUS_TIMEOUT_SECONDS" "$SIDECAR_BIN" status "$IPAD_NAME"

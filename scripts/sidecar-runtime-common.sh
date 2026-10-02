@@ -2,6 +2,94 @@
 # Shared functions for the standalone runtime entry points.
 # This file is sourced from the same directory as the installed scripts.
 
+# Read configuration as data.  The config file is intentionally a small
+# allowlist of KEY=value records; it is never sourced as shell code.  Keep the
+# validation here so every runtime entry point applies the same ownership and
+# permission checks before consuming a setting.
+config_file_is_safe() {
+    local config="${1:-}" owner current mode
+    [ -n "$config" ] || return 1
+    [ -f "$config" ] || return 1
+    # A symlink can be swapped after a check and is not a user-owned config
+    # record, even when its target happens to be a regular file.
+    [ ! -L "$config" ] || return 1
+    [ -r "$config" ] || return 1
+
+    current="$(id -un 2>/dev/null || true)"
+    if [ -x /usr/bin/stat ]; then
+        owner="$(/usr/bin/stat -f%Su "$config" 2>/dev/null || true)"
+        mode="$(/usr/bin/stat -f%Lp "$config" 2>/dev/null || true)"
+    else
+        owner="$(stat -c%U "$config" 2>/dev/null || true)"
+        mode="$(stat -c%a "$config" 2>/dev/null || true)"
+    fi
+    [ -n "$current" ] && [ -n "$owner" ] && [ "$owner" = "$current" ] || return 1
+    case "$mode" in
+        ''|*[!0-7]*) return 1 ;;
+    esac
+    # Group/other write bits would let another account alter executable paths
+    # or values between invocations.  Owner write/read bits are acceptable.
+    (( (8#$mode & 022) == 0 )) || return 1
+    return 0
+}
+
+config_load() {
+    local config="${1:-}" key value
+    config_file_is_safe "$config" || return 0
+
+    # These are the only settings consumed by the runtime scripts.  Unknown
+    # names and malformed records are ignored before they can affect shell
+    # state.  Values are assigned with printf -v; no eval or source is used.
+    local allowed_keys='IPAD_USB_SERIAL_NUMBER,IOREG_BIN,IPAD_NAME,SIDECAR_BIN,SIDECAR_USB_DETECT_BIN,SIDECAR_BLUETOOTH_RADIO_BIN,BLUETOOTH_PROFILER_BIN,NETWORKSETUP_BIN,AUTO_ENABLE_HANDOFF,DEFAULTS_BIN,DISPLAY_STATE_BIN,DISPLAY_VERIFY_SECONDS,DISPLAY_VERIFY_INTERVAL,DISPLAY_SETTLE_SECONDS,DISPLAY_SETTLE_INTERVAL,DISPLAY_SETTLE_SAMPLES,DISPLAY_SETTLE_MIN_SECONDS,SIDECAR_STATUS_TIMEOUT_SECONDS,SIDECAR_BLUETOOTH_PREPARE_TIMEOUT_SECONDS,SIDECAR_CONNECT_TIMEOUT_SECONDS,BETTERDISPLAY_CLI,BETTERDISPLAY_APP,VIRTUAL_DISPLAY_BACKEND,VIRTUAL_DISPLAY_HELPER,BUILTIN_VIRTUAL_DISPLAY_NAME,VIRTUAL_DISPLAY_NAME,BETTERDISPLAY_TIMEOUT_SECONDS,HEADLESS_DISPLAY_WAIT_SECONDS,BETTERDISPLAY_SIDECAR_SPECIFIER,LOG_FILE,AUTO_CREATE_VIRTUAL_DISPLAY,SOUND_START,SOUND_SUCCESS,SOUND_FAILURE,VOICE,SPEAK,SIDECAR_AUTO_TEST_MODE,LOG_MAX_BYTES,SIDECAR_DISCONNECT_TIMEOUT_SECONDS,DISABLE_FALLBACK_WITH_PHYSICAL'
+    while IFS=$'\t' read -r key value; do
+        [ -n "$key" ] || continue
+        # The awk allowlist already constrains names; retain this shell-side
+        # guard so a future parser change cannot turn arbitrary names into
+        # variable assignments.
+        case ",$allowed_keys," in
+            *,"$key",*) printf -v "$key" '%s' "$value" ;;
+        esac
+    done < <(/usr/bin/awk -v keys="$allowed_keys" '
+        BEGIN {
+            count = split(keys, names, ",")
+            for (i = 1; i <= count; i++) allowed[names[i]] = 1
+        }
+        {
+            line = $0
+            sub(/^[[:space:]]*/, "", line)
+            if (line == "" || line ~ /^#/) next
+            # Accept the common shell spelling for existing user configs, but
+            # keep parsing declarative: the optional export keyword is removed
+            # as text and no shell is evaluated.
+            sub(/^export[[:space:]]+/, "", line)
+            if (line !~ /^[A-Za-z_][A-Za-z0-9_]*[[:space:]]*=/) next
+            name = line
+            sub(/[[:space:]]*=.*/, "", name)
+            if (!(name in allowed)) next
+            value = substr(line, index(line, "=") + 1)
+            sub(/^[[:space:]]*/, "", value)
+            sub(/[[:space:]]*$/, "", value)
+            if (value ~ /[\r\n\t]/) next
+            if (value ~ /^"/) {
+                if (value !~ /^"[^"]*"[[:space:]]*(#.*)?$/ || length(value) < 2) next
+                end = index(substr(value, 2), "\"")
+                value = substr(value, 2, end - 1)
+            } else if (value ~ /^\047/) {
+                if (value !~ /^\047[^\047]*\047[[:space:]]*(#.*)?$/ || length(value) < 2) next
+                end = index(substr(value, 2), "\047")
+                value = substr(value, 2, end - 1)
+            } else {
+                # Inline comments are recognized only after at least one
+                # whitespace character, so paths and URLs containing '#' stay
+                # intact.
+                sub(/[[:space:]]+#.*$/, "", value)
+                sub(/[[:space:]]*$/, "", value)
+            }
+            print name "\t" value
+        }
+    ' "$config")
+}
+
 timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
 
 rotate_log_if_needed() {

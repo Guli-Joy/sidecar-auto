@@ -5,6 +5,7 @@
 //  stuck machine pays for the noisy steps.
 
 import Foundation
+import Darwin
 
 // MARK: - Shelling out
 
@@ -16,23 +17,78 @@ func shell(_ path: String, _ args: [String], timeout: TimeInterval = 25) -> (sta
     let process = Process()
     process.executableURL = URL(fileURLWithPath: path)
     process.arguments = args
-    let pipe = Pipe()
-    process.standardOutput = pipe
-    process.standardError = pipe
 
-    do { try process.run() } catch {
+    // Drain output concurrently so a chatty child cannot fill a pipe and
+    // deadlock supervision. Keep only a bounded prefix in memory; diagnostics
+    // are useful up to this limit and unbounded output must not exhaust disk.
+    let outputPipe = Pipe()
+    process.standardOutput = outputPipe
+    process.standardError = outputPipe
+    let outputLimit = 1_048_576
+    let outputLock = NSLock()
+    var captured = Data()
+    let reader = DispatchWorkItem {
+        while true {
+            let data = outputPipe.fileHandleForReading.readData(ofLength: 16_384)
+            if data.isEmpty { break }
+            outputLock.lock()
+            if captured.count < outputLimit {
+                captured.append(data.prefix(outputLimit - captured.count))
+            }
+            outputLock.unlock()
+        }
+    }
+    DispatchQueue.global(qos: .utility).async(execute: reader)
+
+    do {
+        try process.run()
+    } catch {
+        outputPipe.fileHandleForReading.closeFile()
+        reader.cancel()
+        reader.wait()
         return (127, "could not run \(path): \(error.localizedDescription)")
     }
 
-    // Read before waiting: a full pipe buffer would otherwise deadlock us.
-    let data = pipe.fileHandleForReading.readDataToEndOfFile()
-    let deadline = Date().addingTimeInterval(timeout)
+    // Put the command in its own process group so a shell that starts helpers
+    // cannot leave those descendants behind when the timeout fires.
+    let processGroupCreated = setpgid(process.processIdentifier, process.processIdentifier) == 0
+
+    let boundedTimeout = max(0.1, timeout)
+    let deadline = Date().addingTimeInterval(boundedTimeout)
     while process.isRunning && Date() < deadline { usleep(50_000) }
     if process.isRunning {
         process.terminate()
-        return (124, "timed out: \(path)")
+        if processGroupCreated {
+            _ = kill(-process.processIdentifier, SIGTERM)
+        }
+        let terminationDeadline = Date().addingTimeInterval(0.5)
+        while process.isRunning && Date() < terminationDeadline { usleep(20_000) }
+        if process.isRunning {
+            // The command itself may have spawned a descendant. Force the
+            // root process down so callers never wait indefinitely after the
+            // timeout contract has expired.
+            if processGroupCreated {
+                _ = kill(-process.processIdentifier, SIGKILL)
+            } else {
+                let killer = Process()
+                killer.executableURL = URL(fileURLWithPath: "/bin/kill")
+                killer.arguments = ["-KILL", String(process.processIdentifier)]
+                killer.standardOutput = FileHandle.nullDevice
+                killer.standardError = FileHandle.nullDevice
+                try? killer.run()
+                killer.waitUntilExit()
+            }
+            while process.isRunning { usleep(20_000) }
+        }
+        outputPipe.fileHandleForReading.closeFile()
+        reader.wait()
+        outputLock.lock(); let output = String(data: captured, encoding: .utf8) ?? ""; outputLock.unlock()
+        return (124, "timed out: \(path)\(output.isEmpty ? "" : "\n\(output)")")
     }
-    return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    outputPipe.fileHandleForReading.closeFile()
+    reader.wait()
+    outputLock.lock(); let output = String(data: captured, encoding: .utf8) ?? ""; outputLock.unlock()
+    return (process.terminationStatus, output)
 }
 
 private func firstExecutable(_ paths: [String]) -> String? {

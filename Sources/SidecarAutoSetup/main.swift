@@ -1,6 +1,7 @@
 import AppKit
 @preconcurrency import CoreBluetooth
 import SwiftUI
+import Darwin
 
 @MainActor
 final class SidecarAutoAppDelegate: NSObject, NSApplicationDelegate {
@@ -330,6 +331,8 @@ final class SetupModel: ObservableObject {
     private var activeObserver: NSObjectProtocol?
     private var operationLogStartOffset: UInt64 = 0
     private var lastObservedLogSize: UInt64 = 0
+    private var operationTask: Task<ProcessResult, Never>?
+    private var activeOperationExecutable = ""
 
     init() {
         config = readConfig()
@@ -552,10 +555,20 @@ final class SetupModel: ObservableObject {
         guard isOperating else { return }
         isCancelRequested = true
         operationStage = "正在请求取消；正在等待当前命令退出…"
+        // Cover the startup race where the detached worker has not written its
+        // PID file yet. If cancellation wins before execute() starts, the
+        // worker returns without launching a command.
+        operationTask?.cancel()
         let pidURL = URL(fileURLWithPath: "\(NSHomeDirectory())/Library/Caches/sidecar-auto/active-operation.pid")
         guard let text = try? String(contentsOf: pidURL, encoding: .utf8),
               let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)), pid > 0 else {
             appendOperationLog("\n⚠️ 找不到当前操作进程；脚本会在当前阶段结束后停止。\n")
+            return
+        }
+        let command = Self.processCommand(pid: pid) ?? ""
+        let expectedName = URL(fileURLWithPath: activeOperationExecutable).lastPathComponent
+        guard !expectedName.isEmpty, command.contains(expectedName) else {
+            appendOperationLog("\n⚠️ 当前操作 PID 与预期脚本不匹配，已拒绝终止，避免误杀其他进程。\n")
             return
         }
         appendOperationLog("\n正在停止连接脚本和它启动的子进程…\n")
@@ -801,6 +814,7 @@ final class SetupModel: ObservableObject {
         }
 
         isOperating = true
+        activeOperationExecutable = executable
         isCancelRequested = false
         operationLogStartOffset = Self.sidecarLogFileSize()
         lastObservedLogSize = operationLogStartOffset
@@ -808,9 +822,13 @@ final class SetupModel: ObservableObject {
         operationLog = "\(startMessage)\n"
         message = startMessage
         let worker = Task.detached(priority: .userInitiated) {
-            Self.execute(executable: executable, arguments: arguments,
-                         pidFile: "\(NSHomeDirectory())/Library/Caches/sidecar-auto/active-operation.pid")
+            if Task.isCancelled {
+                return ProcessResult(status: 125, output: "操作在启动前已取消。\n")
+            }
+            return Self.execute(executable: executable, arguments: arguments,
+                                pidFile: "\(NSHomeDirectory())/Library/Caches/sidecar-auto/active-operation.pid")
         }
+        operationTask = worker
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.monitorOperation(operationLabel: operationLabel)
@@ -818,6 +836,8 @@ final class SetupModel: ObservableObject {
         Task { @MainActor [weak self] in
             let result = await worker.value
             guard let self else { return }
+            self.operationTask = nil
+            self.activeOperationExecutable = ""
             // The shell entry points intentionally write their detailed
             // diagnostics to the shared log file and may not emit anything
             // on stdout.  Previously the panel therefore stayed at the
@@ -937,17 +957,55 @@ final class SetupModel: ObservableObject {
     /// Stop the action and helper processes started beneath its shell entry
     /// point. Terminating only the top-level shell can leave a waiting `say`,
     /// display helper, or Sidecar request running after the UI says cancelled.
+    ///
+    /// A single process-tree snapshot is racy: a shell can start a helper
+    /// immediately after the snapshot, and a helper can ignore TERM. Keep
+    /// rescanning during a short grace period, then use KILL for every known
+    /// survivor. This makes cancellation bounded even when a child is stuck
+    /// in a system call or has inherited the controller's stdout/stderr.
     private nonisolated static func terminateProcessTree(rootPID: Int32) {
+        guard rootPID > 0 else { return }
+
+        var known = processTree(rootPID: rootPID)
+        // Send TERM to descendants before their parent so the shell has a
+        // chance to clean up its own children while it is still alive.
+        signalProcesses(known, signal: "TERM")
+
+        let graceDeadline = Date().addingTimeInterval(2.0)
+        while Date() < graceDeadline {
+            known.append(contentsOf: processTree(rootPID: rootPID))
+            known = uniqueProcessIDs(known)
+            if known.allSatisfy({ !processIsAlive($0) }) { return }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+
+        // The root may have exited by now, so include descendants discovered
+        // during the grace period before deciding who needs KILL.
+        known.append(contentsOf: processTree(rootPID: rootPID))
+        let survivors = uniqueProcessIDs(known).filter(processIsAlive)
+        guard !survivors.isEmpty else { return }
+        signalProcesses(survivors, signal: "KILL")
+
+        // Do not return while a stubborn child is still alive. A short bounded
+        // wait keeps the UI's "cancelled" state aligned with the process tree.
+        let killDeadline = Date().addingTimeInterval(0.5)
+        while Date() < killDeadline {
+            if survivors.allSatisfy({ !processIsAlive($0) }) { return }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+
+    /// Return the root and every descendant visible in one `ps` snapshot.
+    /// If `ps` cannot be started, retaining the root still lets the caller
+    /// terminate the controller instead of silently reporting cancellation.
+    private nonisolated static func processTree(rootPID: Int32) -> [Int32] {
         let ps = Process()
         let outputPipe = Pipe()
         ps.executableURL = URL(fileURLWithPath: "/bin/ps")
         ps.arguments = ["-axo", "pid=,ppid="]
         ps.standardOutput = outputPipe
         ps.standardError = FileHandle.nullDevice
-        guard (try? ps.run()) != nil else {
-            signalProcesses([rootPID])
-            return
-        }
+        guard (try? ps.run()) != nil else { return [rootPID] }
         let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
         ps.waitUntilExit()
 
@@ -956,10 +1014,12 @@ final class SetupModel: ObservableObject {
             for row in rows.split(separator: "\n") {
                 let fields = row.split(whereSeparator: \.isWhitespace)
                 guard fields.count == 2,
-                      let pid = Int32(fields[0]), let parent = Int32(fields[1]) else { continue }
+                      let pid = Int32(fields[0]), let parent = Int32(fields[1]),
+                      pid > 0, parent > 0 else { continue }
                 children[parent, default: []].append(pid)
             }
         }
+
         var ordered: [Int32] = []
         var visited: Set<Int32> = [rootPID]
         func collect(_ parent: Int32) {
@@ -970,14 +1030,39 @@ final class SetupModel: ObservableObject {
         }
         collect(rootPID)
         ordered.append(rootPID)
-        signalProcesses(ordered)
+        return ordered
     }
 
-    private nonisolated static func signalProcesses(_ pids: [Int32]) {
+    private nonisolated static func processCommand(pid: Int32) -> String? {
+        let ps = Process()
+        let pipe = Pipe()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-o", "command=", "-p", String(pid)]
+        ps.standardOutput = pipe
+        ps.standardError = FileHandle.nullDevice
+        guard (try? ps.run()) != nil else { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private nonisolated static func uniqueProcessIDs(_ pids: [Int32]) -> [Int32] {
+        var seen = Set<Int32>()
+        return pids.filter { seen.insert($0).inserted }
+    }
+
+    private nonisolated static func processIsAlive(_ pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+        // `kill(pid, 0)` performs an existence/permission check without
+        // changing the process. EPERM still means the process exists.
+        return kill(pid, 0) == 0 || errno == EPERM
+    }
+
+    private nonisolated static func signalProcesses(_ pids: [Int32], signal: String) {
         guard !pids.isEmpty else { return }
         let killer = Process()
         killer.executableURL = URL(fileURLWithPath: "/bin/kill")
-        killer.arguments = ["-TERM"] + pids.map(String.init)
+        killer.arguments = ["-\(signal)"] + pids.map(String.init)
         killer.standardOutput = FileHandle.nullDevice
         killer.standardError = FileHandle.nullDevice
         try? killer.run()
@@ -1776,11 +1861,29 @@ final class SetupModel: ObservableObject {
 
     private nonisolated static func execute(executable: String, arguments: [String], pidFile: String? = nil) -> ProcessResult {
         let process = Process()
-        let pipe = Pipe()
+        // Drain output concurrently and retain only a bounded prefix. This
+        // prevents both pipe-buffer deadlocks and unbounded temporary-file
+        // growth when a helper emits continuously.
+        let outputPipe = Pipe()
+        let outputLimit = 1_048_576
+        let outputLock = NSLock()
+        var captured = Data()
+        let reader = DispatchWorkItem {
+            while true {
+                let data = outputPipe.fileHandleForReading.readData(ofLength: 16_384)
+                if data.isEmpty { break }
+                outputLock.lock()
+                if captured.count < outputLimit {
+                    captured.append(data.prefix(outputLimit - captured.count))
+                }
+                outputLock.unlock()
+            }
+        }
+        DispatchQueue.global(qos: .utility).async(execute: reader)
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = arguments
-        process.standardOutput = pipe
-        process.standardError = pipe
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
         var pidURL: URL?
         do {
             try process.run()
@@ -1790,11 +1893,19 @@ final class SetupModel: ObservableObject {
                 try? "\(process.processIdentifier)\n".write(to: url, atomically: true, encoding: .utf8)
                 pidURL = url
             }
-            let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
             process.waitUntilExit()
+            outputPipe.fileHandleForReading.closeFile()
+            reader.cancel()
+            reader.wait()
+            outputLock.lock()
+            let output = String(data: captured, encoding: .utf8) ?? ""
+            outputLock.unlock()
             if let pidURL { try? FileManager.default.removeItem(at: pidURL) }
             return ProcessResult(status: process.terminationStatus, output: output)
         } catch {
+            outputPipe.fileHandleForReading.closeFile()
+            reader.cancel()
+            reader.wait()
             return ProcessResult(status: 127, output: "无法启动 \(executable)：\(error.localizedDescription)\n")
         }
     }

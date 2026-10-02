@@ -6,6 +6,13 @@
 set -u
 
 CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
+    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
+    exit 127
+fi
+. "$SCRIPT_DIR/sidecar-runtime-common.sh"
+config_load "$CONFIG"
 : "${BIN_DIR:=${SIDECAR_AUTO_BIN_DIR:-$HOME/.local/bin}}"
 : "${SIDECAR_BIN:=$BIN_DIR/sidecarctl}"
 : "${DISPLAY_STATE_BIN:=$BIN_DIR/display-state}"
@@ -19,51 +26,11 @@ CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
 : "${VIRTUAL_DISPLAY_HELPER:=$BIN_DIR/sidecar-virtual-display}"
 : "${IPAD_NAME:=}"
 
-# The connection scripts use a shell-readable config, but a diagnostic should
-# never execute configuration contents. Read only plain KEY=value fields.
-config_value() {
-    local key="$1"
-    [ -r "$CONFIG" ] || return 0
-    /usr/bin/awk -v key="$key" '
-        {
-            line = $0
-            sub(/^[ \t]*/, "", line)
-            if (line ~ /^#/ || index(line, "=") == 0) next
-            name = line
-            sub(/=.*/, "", name)
-            if (name != key) next
-            value = substr(line, index(line, "=") + 1)
-            gsub(/^[ \t]+|[ \t]+$/, "", value)
-            if (length(value) >= 2) {
-                first = substr(value, 1, 1)
-                last = substr(value, length(value), 1)
-                if ((first == "\"" && last == "\"") || (first == "\047" && last == "\047"))
-                    value = substr(value, 2, length(value) - 2)
-            }
-            print value
-            exit
-        }
-    ' "$CONFIG"
-}
-
-loaded="$(config_value SIDECAR_BIN)"; [ -z "$loaded" ] || SIDECAR_BIN="$loaded"
-loaded="$(config_value DISPLAY_STATE_BIN)"; [ -z "$loaded" ] || DISPLAY_STATE_BIN="$loaded"
-loaded="$(config_value SIDECAR_USB_DETECT_BIN)"; [ -z "$loaded" ] || USB_DETECT_BIN="$loaded"
-loaded="$(config_value BETTERDISPLAY_CLI)"; [ -z "$loaded" ] || BETTERDISPLAY_CLI="$loaded"
-loaded="$(config_value BETTERDISPLAY_APP)"; [ -z "$loaded" ] || BETTERDISPLAY_APP="$loaded"
-loaded="$(config_value VIRTUAL_DISPLAY_NAME)"; [ -z "$loaded" ] || VIRTUAL_DISPLAY_NAME="$loaded"
-loaded="$(config_value VIRTUAL_DISPLAY_BACKEND)"; [ -z "$loaded" ] || VIRTUAL_DISPLAY_BACKEND="$loaded"
-loaded="$(config_value VIRTUAL_DISPLAY_HELPER)"; [ -z "$loaded" ] || VIRTUAL_DISPLAY_HELPER="$loaded"
-loaded="$(config_value IPAD_NAME)"; [ -z "$loaded" ] || IPAD_NAME="$loaded"
-
 run_limited() {
     local seconds="$1"
     shift
-    if [ -x /usr/bin/perl ]; then
-        /usr/bin/perl -e 'alarm shift; exec @ARGV' "$seconds" "$@"
-    else
-        "$@"
-    fi
+    [ -x /usr/bin/perl ] || return 125
+    /usr/bin/perl -e 'alarm shift; exec @ARGV' "$seconds" "$@"
 }
 
 section() { printf '\n== %s ==\n' "$*"; }

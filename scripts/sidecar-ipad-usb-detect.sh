@@ -16,7 +16,13 @@
 set -u
 
 CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
-[ -r "$CONFIG" ] && . "$CONFIG"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
+    printf 'USB_PROBE_ERROR\t缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh"
+    exit 2
+fi
+. "$SCRIPT_DIR/sidecar-runtime-common.sh"
+config_load "$CONFIG"
 
 : "${IPAD_USB_SERIAL_NUMBER:=}"
 : "${IOREG_BIN:=/usr/sbin/ioreg}"

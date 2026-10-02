@@ -8,7 +8,13 @@
 set -u
 
 CONFIG="${SIDECAR_AUTO_CONFIG:-$HOME/.config/sidecar-auto/config}"
-[ -r "$CONFIG" ] && . "$CONFIG"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
+    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
+    exit 127
+fi
+. "$SCRIPT_DIR/sidecar-runtime-common.sh"
+config_load "$CONFIG"
 
 # Shortcuts asks for a one-time “Run Shell Script” confirmation before this
 # process starts.  The generated shortcut sets this flag so the setup helper
@@ -86,6 +92,56 @@ esac
 : "${SPEAK:=1}"
 : "${SIDECAR_AUTO_TEST_MODE:=0}"
 : "${LOG_MAX_BYTES:=1048576}"
+
+# Keep every command deadline finite and predictable.  Perl's alarm truncates
+# fractional values, and an alarm of zero disables the alarm entirely, so
+# reject those values before any probe or state-changing command runs.
+validate_connect_seconds() {
+    local name="$1" value="$2" maximum="$3"
+    [[ "$value" =~ ^[1-9][0-9]{0,2}$ ]] || {
+        printf '连接配置中的超时值无效：%s=%s（必须是 1-%s 的整数）\n' "$name" "$value" "$maximum" >&2
+        exit 64
+    }
+    (( value <= maximum )) || {
+        printf '连接配置中的超时值超出范围：%s=%s（最大 %s 秒）\n' "$name" "$value" "$maximum" >&2
+        exit 64
+    }
+}
+validate_connect_seconds BETTERDISPLAY_TIMEOUT_SECONDS "$BETTERDISPLAY_TIMEOUT_SECONDS" 30
+validate_connect_seconds SIDECAR_STATUS_TIMEOUT_SECONDS "$SIDECAR_STATUS_TIMEOUT_SECONDS" 60
+validate_connect_seconds SIDECAR_BLUETOOTH_PREPARE_TIMEOUT_SECONDS "$SIDECAR_BLUETOOTH_PREPARE_TIMEOUT_SECONDS" 60
+validate_connect_seconds SIDECAR_CONNECT_TIMEOUT_SECONDS "$SIDECAR_CONNECT_TIMEOUT_SECONDS" 120
+validate_connect_seconds DISPLAY_VERIFY_SECONDS "$DISPLAY_VERIFY_SECONDS" 60
+validate_connect_seconds HEADLESS_DISPLAY_WAIT_SECONDS "$HEADLESS_DISPLAY_WAIT_SECONDS" 60
+validate_connect_seconds DISPLAY_SETTLE_SECONDS "$DISPLAY_SETTLE_SECONDS" 120
+
+validate_connect_nonnegative_int() {
+    local name="$1" value="$2" maximum="$3"
+    [[ "$value" =~ ^[0-9]+$ ]] && (( value <= maximum )) || {
+        printf '连接配置中的整数值无效：%s=%s（范围为 0-%s）\n' "$name" "$value" "$maximum" >&2
+        exit 64
+    }
+}
+validate_connect_nonnegative_int DISPLAY_SETTLE_MIN_SECONDS "$DISPLAY_SETTLE_MIN_SECONDS" 120
+validate_connect_nonnegative_int DISPLAY_SETTLE_SAMPLES "$DISPLAY_SETTLE_SAMPLES" 20
+
+# Polling intervals may be fractional for tests and fast UI transitions, but
+# still need a positive, bounded value so a config cannot create a busy loop
+# or make a single invocation wait indefinitely between probes.
+validate_connect_interval() {
+    local name="$1" value="$2" maximum="$3"
+    [[ "$value" =~ ^(0|[1-9][0-9]*)(\.[0-9]+)?$ ]] || {
+        printf '连接配置中的间隔值无效：%s=%s\n' "$name" "$value" >&2
+        exit 64
+    }
+    awk -v value="$value" -v maximum="$maximum" 'BEGIN { exit !(value > 0 && value <= maximum) }' || {
+        printf '连接配置中的间隔值超出范围：%s=%s（范围为 0-%s 秒）\n' "$name" "$value" "$maximum" >&2
+        exit 64
+    }
+}
+validate_connect_interval DISPLAY_VERIFY_INTERVAL "$DISPLAY_VERIFY_INTERVAL" 5
+validate_connect_interval DISPLAY_SETTLE_INTERVAL "$DISPLAY_SETTLE_INTERVAL" 5
+
 PROGRESS_SPEECH_PID=""
 ACTIVE_VIRTUAL_DISPLAY_BACKEND=""
 BUILTIN_FALLBACK_STARTED_BY_OPERATION=0
@@ -96,12 +152,6 @@ INITIAL_USB_FILE=""
 INITIAL_USB_CODE=""
 LOCK_DIR="$HOME/Library/Caches/sidecar-auto/explicit-action.lock"
 
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-if [ ! -r "$SCRIPT_DIR/sidecar-runtime-common.sh" ]; then
-    printf '缺少共享运行时文件：%s\n' "$SCRIPT_DIR/sidecar-runtime-common.sh" >&2
-    exit 127
-fi
-. "$SCRIPT_DIR/sidecar-runtime-common.sh"
 mkdir -p "$(dirname "$LOG_FILE")" "$(dirname "$LOCK_DIR")" 2>/dev/null || true
 mark_shortcut_invocation "$SLUG"
 monotonic_milliseconds() {
@@ -110,7 +160,7 @@ monotonic_milliseconds() {
 }
 notify() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
-    /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+    run_with_timeout 5 /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true
 on run argv
     display notification (item 2 of argv) with title (item 1 of argv)
 end run
@@ -118,7 +168,7 @@ APPLESCRIPT
 }
 notify_detail() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
-    /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true
+    run_with_timeout 5 /usr/bin/osascript - "$1" "$2" <<'APPLESCRIPT' >/dev/null 2>&1 || true
 on run argv
     display notification (item 2 of argv) with title (item 1 of argv)
 end run
@@ -126,13 +176,13 @@ APPLESCRIPT
 }
 play_sound() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
-    [ -x /usr/bin/afplay ] && [ -r "$1" ] && /usr/bin/afplay "$1" >/dev/null 2>&1 || true
+    [ -x /usr/bin/afplay ] && [ -r "$1" ] && run_with_timeout 5 /usr/bin/afplay "$1" >/dev/null 2>&1 || true
 }
 speak() {
     [ "$SIDECAR_AUTO_TEST_MODE" = "1" ] && return 0
     [ "${SPEAK:-1}" = "0" ] && return 0
     [ -x /usr/bin/say ] || return 0
-    /usr/bin/say -v "$VOICE" "$1" >/dev/null 2>&1 || /usr/bin/say "$1" >/dev/null 2>&1 || true
+    run_with_timeout 10 /usr/bin/say -v "$VOICE" "$1" >/dev/null 2>&1 || run_with_timeout 10 /usr/bin/say "$1" >/dev/null 2>&1 || true
 }
 feedback() {
     # Keep these calls synchronous so the spoken state is heard before the
@@ -149,7 +199,7 @@ feedback_progress() {
     # preflight to proceed during the progress announcement.
     play_sound "$1"
     if [ "$SIDECAR_AUTO_TEST_MODE" != "1" ] && [ "${SPEAK:-1}" != "0" ] && [ -x /usr/bin/say ]; then
-        ( /usr/bin/say -v "$VOICE" "$2" >/dev/null 2>&1 || /usr/bin/say "$2" >/dev/null 2>&1 || true ) &
+        ( run_with_timeout 10 /usr/bin/say -v "$VOICE" "$2" >/dev/null 2>&1 || run_with_timeout 10 /usr/bin/say "$2" >/dev/null 2>&1 || true ) &
         PROGRESS_SPEECH_PID=$!
     fi
 }
@@ -198,14 +248,36 @@ cleanup_on_exit() {
 run_with_timeout() {
     # macOS does not ship GNU timeout. Perl is present on supported macOS
     # installations and lets each explicit command have a hard upper bound.
-    # The direct fallback keeps the helper usable on stripped-down test hosts.
     local seconds="$1"
     shift
-    if [ -x /usr/bin/perl ]; then
-        /usr/bin/perl -e 'alarm shift; exec @ARGV' "$seconds" "$@"
-    else
-        "$@"
+    if [ ! -x /usr/bin/perl ]; then
+        log "cannot run bounded command: /usr/bin/perl unavailable"
+        return 125
     fi
+    /usr/bin/perl -e '
+        use POSIX qw(setpgid);
+        my $seconds = shift;
+        my $child = fork();
+        exit 127 unless defined $child;
+        if ($child == 0) {
+            setpgid(0, 0);
+            exec @ARGV;
+            exit 127;
+        }
+        my $grouped = setpgid($child, $child) == 0;
+        $SIG{ALRM} = sub {
+            kill "TERM", $grouped ? -$child : $child;
+            select undef, undef, undef, 0.2;
+            kill "KILL", $grouped ? -$child : $child;
+            waitpid($child, 0);
+            exit 124;
+        };
+        alarm $seconds;
+        waitpid($child, 0);
+        my $status = $?;
+        alarm 0;
+        exit(($status & 127) ? 128 + ($status & 127) : ($status >> 8));
+    ' "$seconds" "$@"
 }
 run_sidecar_status() {
     run_with_timeout "$SIDECAR_STATUS_TIMEOUT_SECONDS" "$SIDECAR_BIN" status "$@"
@@ -391,9 +463,9 @@ ensure_handoff_on() {
         speak "无法自动开启 Mac 接力，继续尝试无线随航"
         return 0
     fi
-    "$DEFAULTS_BIN" write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool true >/dev/null 2>&1
+    run_with_timeout 5 "$DEFAULTS_BIN" write com.apple.coreservices.useractivityd ActivityAdvertisingAllowed -bool true >/dev/null 2>&1
     advertising_write=$?
-    "$DEFAULTS_BIN" write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool true >/dev/null 2>&1
+    run_with_timeout 5 "$DEFAULTS_BIN" write com.apple.coreservices.useractivityd ActivityReceivingAllowed -bool true >/dev/null 2>&1
     receiving_write=$?
     if [ "$advertising_write" -eq 0 ] && [ "$receiving_write" -eq 0 ]; then
         # These preference keys are private macOS implementation details.
@@ -506,6 +578,12 @@ builtin_virtual_display_id() {
 prepare_builtin_virtual() {
     local output code deadline was_online=0
     if builtin_virtual_online; then was_online=1; fi
+    # Claim ownership before asking the helper to start.  A helper may create
+    # its process and then time out or return an error; recording ownership
+    # first ensures EXIT cleanup still destroys resources created by this run.
+    if [ "$was_online" -eq 0 ]; then
+        BUILTIN_FALLBACK_STARTED_BY_OPERATION=1
+    fi
     output="$(run_builtin_virtual ensure --background 2>&1)"; code=$?
     if [ "$code" -ne 0 ]; then
         log "built-in virtual display failed to start (exit=$code): $output"
@@ -513,11 +591,8 @@ prepare_builtin_virtual() {
         notify_detail "$NOTIFY_TITLE" "项目内置虚拟屏启动失败，未连接随航。详情：$output"
         return 20
     fi
-    # Capture ownership from the preflight state. If it was already online
-    # before this operation, leave it alone on cancellation or failure.
-    if [ "$was_online" -eq 0 ]; then
-        BUILTIN_FALLBACK_STARTED_BY_OPERATION=1
-    fi
+    # If it was already online before this operation, leave it alone on
+    # cancellation or failure.
     deadline=$((SECONDS + HEADLESS_DISPLAY_WAIT_SECONDS))
     while (( SECONDS <= deadline )); do
         if builtin_virtual_online; then
