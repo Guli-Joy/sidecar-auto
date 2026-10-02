@@ -20,8 +20,8 @@ shasum -a 256 ./dist/Sidecar-Auto-Setup-1.0.0-arm64.dmg > ./dist/SHA256SUMS
 
 脚本会把 `sidecarctl`、显示探针、蓝牙 helper 和连接脚本放进 App Resources；
 最终 App 的“安装 / 修复”按钮才会把它们复制到当前用户的 `~/.local/bin`。构建
-脚本默认不签名，适合 CI 编译检查。`--host-only` 可以在不需要交叉编译时只构建
-当前架构。
+脚本默认使用本地 ad-hoc 封装签名，不需要证书；`--host-only` 可以在不需要交叉编译
+时只构建当前架构。
 
 生成 `dist/Sidecar-Auto-Setup-1.0.0-arm64.dmg` 和 `SHA256SUMS` 后，把它们上传到
 GitHub Release。首次打开若被 macOS 拦截，到“系统设置 → 隐私与安全性”允许打开即可。

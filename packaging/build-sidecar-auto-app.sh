@@ -20,6 +20,7 @@ STAGE=""
 VERSION="${SIDECAR_AUTO_VERSION:-1.0.0}"
 BUILD_VERSION="${SIDECAR_AUTO_BUILD_VERSION:-}"
 SIGNING_IDENTITY="${SIDECAR_AUTO_SIGNING_IDENTITY:-}"
+ADHOC_SIGNED=0
 ARCH_SPEC="${SIDECAR_AUTO_ARCHS:-arm64 x86_64}"
 MIN_MACOS="${SIDECAR_AUTO_MIN_MACOS:-13.0}"
 
@@ -35,7 +36,7 @@ usage() {
   --arch LIST             架构列表，例如 arm64,x86_64
   --output DIR            输出目录（默认：./dist）
   --version VERSION       CFBundleShortVersionString（默认：1.0.0）
-  --sign IDENTITY         用 codesign 身份签名；不指定则输出未签名 App
+  --sign IDENTITY         用 codesign 身份签名；不指定则使用本地 ad-hoc 封装签名
   -h, --help              显示帮助
 
 环境变量：
@@ -267,8 +268,15 @@ sign_nested() {
     codesign "${options[@]}" "$STAGE/app"
 }
 
+command -v codesign >/dev/null 2>&1 || fail "找不到 codesign；App bundle 需要完成封装签名"
 if [ -n "$SIGNING_IDENTITY" ]; then
-    command -v codesign >/dev/null 2>&1 || fail "指定了签名身份，但找不到 codesign"
+    sign_nested
+else
+    # Swift and clang may leave an ad-hoc signature on individual Mach-O files.
+    # Seal the complete bundle after resources are copied so macOS does not
+    # report the downloaded app as damaged when its resource seal is checked.
+    SIGNING_IDENTITY="-"
+    ADHOC_SIGNED=1
     sign_nested
 fi
 
@@ -306,6 +314,6 @@ if [ -n "$SIGNING_IDENTITY" ]; then
 fi
 
 info "完成：$APP_DIR"
-if [ -z "$SIGNING_IDENTITY" ]; then
-    info "这是未签名构建；发布给普通用户前请使用 Developer ID 签名并提交 Apple 公证。"
+if [ "$ADHOC_SIGNED" -eq 1 ]; then
+    info "已使用本地 ad-hoc 封装签名；它不需要证书，首次打开仍按 macOS 提示允许即可。"
 fi
