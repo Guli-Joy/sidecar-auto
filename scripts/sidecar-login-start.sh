@@ -78,8 +78,13 @@ while [ "$attempt" -le "$MAX_ATTEMPTS" ]; do
         "$APP_EXECUTABLE" >> "$LOG_FILE" 2>&1
     status=$?
     if [ "$status" -eq 0 ]; then
-        log "Sidecar Auto exited normally after login startup"
-        exit 0
+        if [ "${SIDECAR_AUTO_LOGIN_SKIP_EXISTING_CHECK:-0}" = "1" ] || \
+           /usr/bin/pgrep -x SidecarAutoSetup >/dev/null 2>&1; then
+            log "login startup handoff complete; Sidecar Auto is running"
+            exit 0
+        fi
+        log "Sidecar Auto returned success but no app process was found"
+        status=1
     fi
 
     log "Sidecar Auto exited during login startup (status=$status)"

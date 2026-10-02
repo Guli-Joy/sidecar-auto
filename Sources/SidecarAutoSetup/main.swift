@@ -2113,6 +2113,10 @@ final class SetupModel: ObservableObject {
         return output.contains("\nstate = running") || output.contains("\njob state = running")
     }
 
+    private nonisolated static func appIsRunning() -> Bool {
+        execute(executable: "/usr/bin/pgrep", arguments: ["-x", "SidecarAutoSetup"]).status == 0
+    }
+
     private nonisolated static func headlessAgentStatus(config: SetupConfig) ->
         (ok: Bool, detail: String, actionTitle: String) {
         guard config.virtualDisplayBackend != .betterdisplay else {
@@ -2137,7 +2141,7 @@ final class SetupModel: ObservableObject {
         if !config.autoStartHeadlessDisplay {
             return (false, "未开启；登录后不会静默启动 Sidecar Auto，也不会在无实体显示器时准备虚拟屏。", "开启静默启动")
         }
-        if headlessAgentIsRunning() {
+        if headlessAgentIsRunning() || appIsRunning() {
             return (true, "已开启：登录进入桌面后会静默启动 Sidecar Auto；没有实体显示器时由 App 准备项目内置虚拟屏，不会自动连接或断开 iPad。", "停用静默启动")
         }
         if headlessAgentIsLoaded() {
@@ -2230,7 +2234,8 @@ final class SetupModel: ObservableObject {
     private func toggleHeadlessAgent() {
         guard !isManagingHeadlessAgent else { return }
         isManagingHeadlessAgent = true
-        let enable = !Self.headlessAgentIsLoaded() || !Self.headlessAgentIsRunning()
+        let enable = !Self.headlessAgentIsLoaded() ||
+            (!Self.headlessAgentIsRunning() && !Self.appIsRunning())
         config.autoStartHeadlessDisplay = enable
         do {
             try writeConfig(config)
