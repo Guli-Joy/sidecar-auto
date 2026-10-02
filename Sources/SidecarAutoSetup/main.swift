@@ -357,6 +357,7 @@ final class SetupModel: ObservableObject {
     private var lastObservedLogSize: UInt64 = 0
     private var operationTask: Task<ProcessResult, Never>?
     private var headlessStartTask: Task<Void, Never>?
+    private var refreshRequestedWhileBusy = false
     private var activeOperationExecutable = ""
     private var pendingRuntimeOperation: PendingRuntimeOperation?
 
@@ -599,7 +600,13 @@ final class SetupModel: ObservableObject {
     var currentAppVersion: String { Self.currentAppVersionValue }
 
     func refresh() {
-        guard !isRefreshing else { return }
+        if isRefreshing {
+            // The initial probe can still be running when the settings window
+            // appears. Keep the later request so a login-started process gets a
+            // second probe after its RunningBoard handoff has settled.
+            refreshRequestedWhileBusy = true
+            return
+        }
         isRefreshing = true
         message = "正在读取本机状态……"
         let currentConfig = config
@@ -608,10 +615,16 @@ final class SetupModel: ObservableObject {
         }
         Task { @MainActor [weak self] in
             let result = await worker.value
-            self?.checks = result
-            self?.isRefreshing = false
-            self?.message = "状态已更新。需要用户确认的项目会显示操作按钮。"
-            self?.probeBluetoothIfNeeded()
+            guard let self else { return }
+            self.checks = result
+            self.isRefreshing = false
+            self.message = "状态已更新。需要用户确认的项目会显示操作按钮。"
+            self.probeBluetoothIfNeeded()
+            let rerun = self.refreshRequestedWhileBusy
+            self.refreshRequestedWhileBusy = false
+            if rerun {
+                self.refresh()
+            }
         }
     }
 
@@ -2114,7 +2127,13 @@ final class SetupModel: ObservableObject {
     }
 
     private nonisolated static func appIsRunning() -> Bool {
-        execute(executable: "/usr/bin/pgrep", arguments: ["-x", "SidecarAutoSetup"]).status == 0
+        // The status card is rendered by this process. Checking the current
+        // process name avoids a startup race where pgrep runs before macOS has
+        // published the app to the process table.
+        if ProcessInfo.processInfo.processName == "SidecarAutoSetup" {
+            return true
+        }
+        return execute(executable: "/usr/bin/pgrep", arguments: ["-x", "SidecarAutoSetup"]).status == 0
     }
 
     private nonisolated static func headlessAgentStatus(config: SetupConfig) ->
